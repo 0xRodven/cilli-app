@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { PageHeader } from "@/components/layout/page-header"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -136,7 +137,11 @@ export default function SuppliersPage() {
                   const exp = expenses[supplier.name]
                   return (
                     <TableRow key={supplier.id}>
-                      <TableCell className="font-medium">{supplier.name}</TableCell>
+                      <TableCell className="font-medium">
+                        <Link href={`/suppliers/${supplier.id}`} className="hover:underline text-primary">
+                          {supplier.name}
+                        </Link>
+                      </TableCell>
                       <TableCell>
                         {supplier.city && (
                           <span className="flex items-center gap-1 text-muted-foreground">

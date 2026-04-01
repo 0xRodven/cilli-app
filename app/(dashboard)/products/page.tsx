@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { getPocketBase } from "@/lib/pocketbase"
+import Link from "next/link"
 import { Search, Package } from "lucide-react"
 import type { Product } from "@/lib/types"
 
@@ -99,7 +100,11 @@ export default function ProductsPage() {
                   ) : (
                     products.map((product: Product) => (
                       <TableRow key={product.id}>
-                        <TableCell className="font-medium">{product.name}</TableCell>
+                        <TableCell className="font-medium">
+                          <Link href={`/products/${product.id}`} className="hover:underline text-primary">
+                            {product.name}
+                          </Link>
+                        </TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">{product.code || "—"}</TableCell>
                         <TableCell>{product.category || "—"}</TableCell>
                         <TableCell className="text-muted-foreground">{product.unit || "—"}</TableCell>
