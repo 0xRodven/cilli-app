@@ -47,7 +47,7 @@ const navSections: NavSection[] = [
     items: [
       { title: "Factures", href: "/invoices", icon: FileText },
       { title: "Fournisseurs", href: "/suppliers", icon: Building2 },
-      { title: "Produits", href: "/products", icon: Package, disabled: true },
+      { title: "Produits", href: "/products", icon: Package },
       { title: "Alertes", href: "/anomalies", icon: AlertTriangle },
     ],
   },
@@ -61,8 +61,8 @@ const navSections: NavSection[] = [
   {
     title: "Outils",
     items: [
-      { title: "Import", href: "/import", icon: Upload, disabled: true },
-      { title: "Paramètres", href: "/settings", icon: Settings, disabled: true },
+      { title: "Import", href: "/import", icon: Upload },
+      { title: "Paramètres", href: "/settings", icon: Settings },
     ],
   },
 ]
