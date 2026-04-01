@@ -22,8 +22,10 @@ export function useSuppliers(search?: string) {
           filter: filters.join(" && ") || undefined,
           sort: "name",
         })
+        console.log("[useSuppliers] result:", result.totalItems, "items:", result.items?.length)
         setSuppliers(result.items)
       } catch (err) {
+        console.error("[useSuppliers] error:", err)
         setError(err instanceof Error ? err.message : "Erreur")
       } finally {
         setLoading(false)

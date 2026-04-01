@@ -17,7 +17,9 @@ export function getPocketBase(): PocketBase {
     return new PocketBase(getPocketBaseUrl())
   }
   if (!pbInstance) {
-    pbInstance = new PocketBase(getPocketBaseUrl())
+    const url = getPocketBaseUrl()
+    console.log("[PocketBase] init with URL:", url)
+    pbInstance = new PocketBase(url)
     pbInstance.autoCancellation(false)
   }
   return pbInstance
