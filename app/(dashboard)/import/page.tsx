@@ -1,0 +1,145 @@
+"use client"
+
+import { useState, useCallback } from "react"
+import { PageHeader } from "@/components/layout/page-header"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { getPocketBase } from "@/lib/pocketbase"
+import { toast } from "sonner"
+import { Upload, FileText, CheckCircle, XCircle, Loader2 } from "lucide-react"
+import { cn, formatDate } from "@/lib/utils"
+import { useEffect } from "react"
+import type { Import } from "@/lib/types"
+
+export default function ImportPage() {
+  const [dragging, setDragging] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [imports, setImports] = useState<Import[]>([])
+
+  useEffect(() => {
+    async function fetchImports() {
+      try {
+        const pb = getPocketBase()
+        const result = await pb.collection("imports").getList<Import>(1, 20, { sort: "-created" })
+        setImports(result.items)
+      } catch { /* silent */ }
+    }
+    fetchImports()
+  }, [])
+
+  const handleFiles = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    setUploading(true)
+    try {
+      const pb = getPocketBase()
+      for (const file of Array.from(files)) {
+        const formData = new FormData()
+        formData.append("filename", file.name)
+        formData.append("fileSize", file.size.toString())
+        formData.append("mimeType", file.type)
+        formData.append("file", file)
+        formData.append("status", "uploading")
+        formData.append("progress", "0")
+        await pb.collection("imports").create(formData)
+      }
+      toast.success(`${files.length} fichier${files.length > 1 ? "s" : ""} uploadé${files.length > 1 ? "s" : ""}`)
+      const result = await pb.collection("imports").getList<Import>(1, 20, { sort: "-created" })
+      setImports(result.items)
+    } catch (err) {
+      toast.error("Erreur lors de l'upload")
+    } finally {
+      setUploading(false)
+    }
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setDragging(false)
+    handleFiles(e.dataTransfer.files)
+  }, [handleFiles])
+
+  const statusConfig = {
+    uploading: { label: "Upload...", variant: "info" as const, icon: Loader2, spin: true },
+    processing: { label: "Traitement...", variant: "warning" as const, icon: Loader2, spin: true },
+    completed: { label: "Terminé", variant: "success" as const, icon: CheckCircle, spin: false },
+    error: { label: "Erreur", variant: "destructive" as const, icon: XCircle, spin: false },
+  }
+
+  return (
+    <div className="space-y-4">
+      <PageHeader title="Import factures" description="Uploadez vos factures PDF ou images" sticky />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Déposer des fichiers</CardTitle>
+          <CardDescription>Formats acceptés : PDF, JPG, PNG, HEIC — taille max 10 Mo</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div
+            className={cn(
+              "border-2 border-dashed rounded-lg p-10 text-center transition-colors",
+              dragging ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-muted-foreground/50",
+              "cursor-pointer"
+            )}
+            onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={handleDrop}
+            onClick={() => document.getElementById("file-input")?.click()}
+          >
+            <input
+              id="file-input"
+              type="file"
+              multiple
+              accept=".pdf,.jpg,.jpeg,.png,.heic"
+              className="hidden"
+              onChange={(e) => handleFiles(e.target.files)}
+            />
+            {uploading ? (
+              <Loader2 className="size-8 mx-auto mb-3 text-primary animate-spin" />
+            ) : (
+              <Upload className="size-8 mx-auto mb-3 text-muted-foreground" />
+            )}
+            <p className="font-medium">{uploading ? "Upload en cours..." : "Déposez vos factures ici"}</p>
+            <p className="text-sm text-muted-foreground mt-1">ou cliquez pour sélectionner des fichiers</p>
+            {!uploading && (
+              <Button className="mt-4" variant="outline" type="button">
+                Parcourir...
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {imports.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Historique des imports</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {imports.map((imp: Import) => {
+              const config = statusConfig[imp.status] || statusConfig.uploading
+              const Icon = config.icon
+              return (
+                <div key={imp.id} className="flex items-center gap-3 p-3 bg-muted/30 rounded-md">
+                  <FileText className="size-4 text-muted-foreground shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{imp.filename}</p>
+                    <p className="text-xs text-muted-foreground">{formatDate(imp.created)}</p>
+                    {imp.errorMessage && (
+                      <p className="text-xs text-destructive mt-0.5">{imp.errorMessage}</p>
+                    )}
+                  </div>
+                  <Badge variant={config.variant} className="gap-1 shrink-0">
+                    <Icon className={cn("size-3", config.spin && "animate-spin")} />
+                    {config.label}
+                  </Badge>
+                </div>
+              )
+            })}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  )
+}

@@ -1,0 +1,10 @@
+{
+  "name": "cilli-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "pocketbase": "^0.21.0",
+    "tsx": "^4.7.0"
+  }
+}
