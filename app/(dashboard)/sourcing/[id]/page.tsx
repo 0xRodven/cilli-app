@@ -38,6 +38,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   Shield,
+  ExternalLink,
 } from "lucide-react"
 import type { Activity, SourcingFind, MarketPrice, PriceHistory, Product } from "@/lib/types"
 
@@ -265,12 +266,12 @@ export default function SourcingReportPage() {
   }
 
   /** Get the best (lowest) market price for a product this week. */
-  function getBestMarketPrice(productName: string): { price: number; source: string } | null {
+  function getBestMarketPrice(productName: string): { price: number; source: string; sourceUrl: string } | null {
     const lower = productName.toLowerCase()
     const matching = marketPrices.filter((mp) => mp.productName.toLowerCase() === lower)
     if (matching.length === 0) return null
     const best = matching.reduce((min, mp) => (mp.price < min.price ? mp : min), matching[0])
-    return { price: best.price, source: best.source }
+    return { price: best.price, source: best.source, sourceUrl: best.sourceUrl || "" }
   }
 
   /** Priority find (highest savings > 15%). */
@@ -302,6 +303,7 @@ export default function SourcingReportPage() {
       yourPrice: number | null
       marketPrice: number | null
       marketSource: string
+      marketSourceUrl: string
       ecartPct: number
       productId: string | null
     }[] = []
@@ -312,6 +314,7 @@ export default function SourcingReportPage() {
       const best = getBestMarketPrice(name)
       const marketPrice = best?.price ?? null
       const marketSource = best?.source ?? ""
+      const marketSourceUrl = best?.sourceUrl ?? ""
       const ecart = yourPrice && marketPrice ? savingsPct(yourPrice, marketPrice) : 0
       const prod = findProductByName(name)
       rows.push({
@@ -320,6 +323,7 @@ export default function SourcingReportPage() {
         yourPrice,
         marketPrice,
         marketSource,
+        marketSourceUrl,
         ecartPct: ecart,
         productId: prod?.id ?? null,
       })
@@ -720,9 +724,18 @@ export default function SourcingReportPage() {
                                 <TableCell>
                                   {row.marketSource && fiability ? (
                                     <div className="flex items-center gap-1.5">
-                                      <Badge variant="outline" className="text-xs">
-                                        {row.marketSource}
-                                      </Badge>
+                                      {row.marketSourceUrl ? (
+                                        <a href={row.marketSourceUrl} target="_blank" rel="noopener noreferrer">
+                                          <Badge variant="outline" className="text-xs hover:bg-accent transition-colors cursor-pointer">
+                                            {row.marketSource}
+                                            <ExternalLink className="size-2.5 ml-0.5 opacity-50" />
+                                          </Badge>
+                                        </a>
+                                      ) : (
+                                        <Badge variant="outline" className="text-xs">
+                                          {row.marketSource}
+                                        </Badge>
+                                      )}
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <span className={`text-xs ${fiability.color}`}>
