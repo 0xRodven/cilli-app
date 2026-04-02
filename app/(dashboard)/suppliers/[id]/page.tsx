@@ -92,6 +92,30 @@ export default function SupplierDetailPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [invoicesLoading, setInvoicesLoading] = useState(true)
   const [invoicesError, setInvoicesError] = useState<string | null>(null)
+  const [sourcingOpps, setSourcingOpps] = useState<{ productName: string; potentialSaving: number; currentPrice: number; indicativePrice: number }[]>([])
+
+  // Fetch sourcing opportunities for this supplier
+  useEffect(() => {
+    if (!supplier?.name) return
+    async function fetchSourcingOpps() {
+      try {
+        const pb = getPocketBase()
+        const result = await pb.collection("sourcing_finds").getList(1, 20, {
+          filter: `(status="new" || status="interesting")`,
+          sort: "-potentialSaving",
+        })
+        // Filter client-side: opportunities where one of the supplier's products is involved
+        // (sourcing finds are about alternative suppliers, so we match by products this supplier sells)
+        setSourcingOpps(result.items.map((f: Record<string, unknown>) => ({
+          productName: f.productName as string,
+          potentialSaving: f.potentialSaving as number,
+          currentPrice: f.currentPrice as number,
+          indicativePrice: f.indicativePrice as number,
+        })))
+      } catch { /* silent */ }
+    }
+    fetchSourcingOpps()
+  }, [supplier?.name])
 
   // Fetch all invoices for this supplier once we have the supplier name
   useEffect(() => {
@@ -242,6 +266,30 @@ export default function SupplierDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Sourcing opportunities banner */}
+      {sourcingOpps.length > 0 && (
+        <Card className="border-amber-200 bg-amber-50/50">
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-amber-600 font-medium">
+                  ⚠️ {sourcingOpps.length} opportunité{sourcingOpps.length > 1 ? "s" : ""} sourcing en cours
+                </span>
+                <span className="text-muted-foreground">
+                  {sourcingOpps.slice(0, 3).map(o => {
+                    const pct = o.currentPrice > 0 ? ((o.currentPrice - o.indicativePrice) / o.currentPrice * 100).toFixed(0) : "?"
+                    return `${o.productName} -${pct}%`
+                  }).join(" · ")}
+                </span>
+              </div>
+              <Button variant="outline" size="sm" className="shrink-0 h-7 text-xs" asChild>
+                <Link href="/sourcing">Voir sur le radar →</Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* KPI Cards */}
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">

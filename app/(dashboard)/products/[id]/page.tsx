@@ -32,8 +32,10 @@ import {
   TrendingUp,
   ShoppingCart,
   BarChart3,
+  ExternalLink,
+  Radar,
 } from "lucide-react"
-import type { Product, PriceHistory, Anomaly, SupplierProduct } from "@/lib/types"
+import type { Product, PriceHistory, Anomaly, SupplierProduct, MarketPrice, SourcingFind } from "@/lib/types"
 
 // --- French month names ---
 const MONTH_NAMES_FR = [
@@ -89,6 +91,8 @@ export default function ProductDetailPage() {
   const [history, setHistory] = useState<PriceHistory[]>([])
   const [supplierProducts, setSupplierProducts] = useState<SupplierProduct[]>([])
   const [anomalies, setAnomalies] = useState<Anomaly[]>([])
+  const [marketPrices, setMarketPrices] = useState<MarketPrice[]>([])
+  const [sourcingFinds, setSourcingFinds] = useState<SourcingFind[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -131,6 +135,28 @@ export default function ProductDetailPage() {
           setAnomalies(anomResult.items)
         } catch {
           // ignore if no matching anomalies
+        }
+
+        // Fetch market prices for this product
+        try {
+          const mpResult = await pb.collection("market_prices").getList<MarketPrice>(1, 200, {
+            filter: `productName~"${prod.name}"`,
+            sort: "-scrapedAt",
+          })
+          setMarketPrices(mpResult.items)
+        } catch {
+          // collection may not exist yet
+        }
+
+        // Fetch sourcing finds for this product (new or interesting only)
+        try {
+          const sfResult = await pb.collection("sourcing_finds").getList<SourcingFind>(1, 50, {
+            filter: `productName~"${prod.name}" && (status="new" || status="interesting")`,
+            sort: "-created",
+          })
+          setSourcingFinds(sfResult.items)
+        } catch {
+          // collection may not exist yet
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Erreur de chargement")
@@ -272,6 +298,117 @@ export default function ProductDetailPage() {
   // Purchase history (last 20)
   const recentHistory = useMemo(() => history.slice(0, 20), [history])
 
+  // --- Market price helpers ---
+
+  // Reliability badge for a market price source
+  function sourceReliability(source: string): { label: string; color: string } {
+    const s = (source || "").toLowerCase()
+    if (s.includes("rnm") || s.includes("franceagrimer") || s.includes("min")) {
+      return { label: "\u2588\u2588 Haute", color: "text-green-700 bg-green-50" }
+    }
+    if (s.includes("metro") || s.includes("promocash") || s.includes("transgourmet")) {
+      return { label: "\u2588\u2592 Moy.", color: "text-amber-700 bg-amber-50" }
+    }
+    return { label: "\u2592\u2592 Faible", color: "text-gray-500 bg-gray-50" }
+  }
+
+  // Check if a source string looks like a URL
+  function isUrl(source: string): boolean {
+    return /^https?:\/\//.test((source || "").trim())
+  }
+
+  // Unique market price source names
+  const marketSourceNames = useMemo(() => {
+    const names = new Set<string>()
+    for (const mp of marketPrices) {
+      names.add(mp.source || "Inconnu")
+    }
+    return Array.from(names)
+  }, [marketPrices])
+
+  // Market chart colors (dashed lines) — use different palette offset
+  const MARKET_LINE_COLORS = ["#8B5CF6", "#EC4899", "#14B8A6", "#F97316", "#6366F1", "#84CC16", "#EF4444", "#F59E0B"]
+
+  // Build weekly chart data: internal price + market prices per source (last 12 weeks)
+  const marketChartData = useMemo(() => {
+    // Generate last 12 week labels
+    const now = new Date()
+    const weeks: { start: Date; label: string; key: string }[] = []
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now)
+      d.setDate(d.getDate() - i * 7)
+      // Monday of that week
+      const day = d.getDay()
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1)
+      const monday = new Date(d.setDate(diff))
+      monday.setHours(0, 0, 0, 0)
+      const label = `S${String(getWeekNumber(monday)).padStart(2, "0")}`
+      const key = monday.toISOString().slice(0, 10)
+      weeks.push({ start: monday, label, key })
+    }
+
+    // Helper: find which week a date falls into
+    function findWeekIdx(dateStr: string): number {
+      const d = new Date(dateStr)
+      for (let i = weeks.length - 1; i >= 0; i--) {
+        const nextStart = i < weeks.length - 1 ? weeks[i + 1].start : new Date(weeks[i].start.getTime() + 7 * 86400000)
+        if (d >= weeks[i].start && d < nextStart) return i
+      }
+      return -1
+    }
+
+    // Group internal prices by week (average)
+    const internalByWeek = new Map<number, number[]>()
+    for (const h of history) {
+      const idx = findWeekIdx(h.date)
+      if (idx >= 0) {
+        if (!internalByWeek.has(idx)) internalByWeek.set(idx, [])
+        internalByWeek.get(idx)!.push(h.price)
+      }
+    }
+
+    // Group market prices by week+source (average)
+    const marketByWeek = new Map<number, Map<string, number[]>>()
+    for (const mp of marketPrices) {
+      const idx = findWeekIdx(mp.scrapedAt)
+      if (idx >= 0) {
+        if (!marketByWeek.has(idx)) marketByWeek.set(idx, new Map())
+        const srcMap = marketByWeek.get(idx)!
+        const src = mp.source || "Inconnu"
+        if (!srcMap.has(src)) srcMap.set(src, [])
+        srcMap.get(src)!.push(mp.price)
+      }
+    }
+
+    return weeks.map((w, i) => {
+      const point: Record<string, string | number | undefined> = { week: w.label }
+
+      // Internal price
+      const internal = internalByWeek.get(i)
+      if (internal && internal.length > 0) {
+        point["Prix interne"] = Math.round((internal.reduce((a, b) => a + b, 0) / internal.length) * 100) / 100
+      }
+
+      // Market sources
+      const srcMap = marketByWeek.get(i)
+      if (srcMap) {
+        for (const [src, prices] of srcMap) {
+          point[src] = Math.round((prices.reduce((a, b) => a + b, 0) / prices.length) * 100) / 100
+        }
+      }
+
+      return point
+    })
+  }, [history, marketPrices])
+
+  // ISO week number helper
+  function getWeekNumber(d: Date): number {
+    const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+    date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7))
+    const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1))
+    return Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
+  }
+
   // --- Loading state ---
   if (loading) {
     return (
@@ -390,6 +527,26 @@ export default function ProductDetailPage() {
           </Link>
         </div>
       )}
+
+      {/* ===== Top-level page tabs ===== */}
+      <Tabs defaultValue="achats" className="space-y-6">
+        <TabsList>
+          <TabsTrigger value="achats" className="gap-1.5">
+            <ShoppingCart className="size-3.5" />
+            Achats
+          </TabsTrigger>
+          <TabsTrigger value="prix-marche" className="gap-1.5">
+            <Radar className="size-3.5" />
+            Prix march{"\u00e9"}{marketPrices.length > 0 && (
+              <span className="ml-1 inline-flex items-center justify-center rounded-full bg-green-500 text-white text-[10px] font-bold leading-none size-5">
+                {marketPrices.length}
+              </span>
+            )}
+          </TabsTrigger>
+        </TabsList>
+
+        {/* ===== Tab: Achats (existing content) ===== */}
+        <TabsContent value="achats" className="space-y-6">
 
       {/* Description */}
       {product.description && (
@@ -713,6 +870,249 @@ export default function ProductDetailPage() {
           </CardContent>
         </Card>
       )}
+
+        </TabsContent>
+
+        {/* ===== Tab: Prix marché ===== */}
+        <TabsContent value="prix-marche" className="space-y-6">
+
+          {/* A) Chart: Internal price vs Market prices */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <TrendingUp className="size-4" />
+                Prix interne vs Prix marche
+              </CardTitle>
+              <CardDescription>
+                Comparaison hebdomadaire sur les 12 dernieres semaines
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {marketChartData.length === 0 && history.length === 0 ? (
+                <div className="flex items-center justify-center h-[260px] text-muted-foreground text-sm">
+                  Aucune donnee disponible
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={marketChartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                    <XAxis
+                      dataKey="week"
+                      tick={{ fontSize: 11 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      tickFormatter={(v) => fmtEur(v)}
+                      tick={{ fontSize: 11 }}
+                      axisLine={false}
+                      tickLine={false}
+                      width={80}
+                    />
+                    <Tooltip
+                      formatter={(value: number, name: string) => [fmtEur(value), name]}
+                      contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #E5E7EB" }}
+                      labelStyle={{ fontWeight: 600, marginBottom: 4 }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    {/* Internal price line — solid */}
+                    <Line
+                      type="monotone"
+                      dataKey="Prix interne"
+                      stroke={CHART_COLORS.blue}
+                      strokeWidth={2.5}
+                      dot={{ r: 3, fill: CHART_COLORS.blue }}
+                      activeDot={{ r: 5 }}
+                      connectNulls={false}
+                    />
+                    {/* Market source lines — dashed */}
+                    {marketSourceNames.map((src, i) => (
+                      <Line
+                        key={src}
+                        type="monotone"
+                        dataKey={src}
+                        stroke={MARKET_LINE_COLORS[i % MARKET_LINE_COLORS.length]}
+                        strokeWidth={1.5}
+                        strokeDasharray="6 3"
+                        dot={{ r: 2, fill: MARKET_LINE_COLORS[i % MARKET_LINE_COLORS.length] }}
+                        activeDot={{ r: 4 }}
+                        connectNulls={false}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* B) Table: Historique des relevés */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Historique des releves</CardTitle>
+              <CardDescription>
+                {marketPrices.length === 0
+                  ? "Aucun releve de prix marche"
+                  : `${marketPrices.length} releve${marketPrices.length !== 1 ? "s" : ""} enregistre${marketPrices.length !== 1 ? "s" : ""}`}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              {marketPrices.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground px-6">
+                  <Radar className="size-8 mb-2 opacity-30" />
+                  <p className="text-sm">
+                    Aucun prix marche enregistre. L&apos;agent sourcing collecte les prix automatiquement.
+                  </p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead className="text-right">Prix</TableHead>
+                      <TableHead>Source</TableHead>
+                      <TableHead>Fiabilite</TableHead>
+                      <TableHead className="w-[50px]">Lien</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {marketPrices.map((mp) => {
+                      const reliability = sourceReliability(mp.source)
+                      return (
+                        <TableRow key={mp.id}>
+                          <TableCell className="text-muted-foreground">
+                            {mp.scrapedAt ? formatDate(mp.scrapedAt) : "\u2014"}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums font-semibold">
+                            {formatCurrency(mp.price)}{mp.unit ? ` / ${mp.unit}` : ""}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-xs">
+                              {mp.source || "\u2014"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${reliability.color}`}>
+                              {reliability.label}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            {isUrl(mp.source) ? (
+                              <a
+                                href={mp.source}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-muted-foreground hover:text-foreground transition-colors"
+                              >
+                                <ExternalLink className="size-3.5" />
+                              </a>
+                            ) : (
+                              <span className="text-muted-foreground/30">\u2014</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* C) Opportunités sourcing en cours */}
+          {sourcingFinds.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Radar className="size-4" />
+                  Opportunites sourcing en cours
+                </CardTitle>
+                <CardDescription>
+                  {sourcingFinds.length} opportunite{sourcingFinds.length !== 1 ? "s" : ""} identifiee{sourcingFinds.length !== 1 ? "s" : ""}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {sourcingFinds.map((sf) => {
+                    const savingPct = sf.currentPrice > 0
+                      ? Math.round(((sf.currentPrice - sf.indicativePrice) / sf.currentPrice) * 100)
+                      : null
+                    return (
+                      <div
+                        key={sf.id}
+                        className="rounded-lg border p-3 space-y-2"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-medium text-sm truncate">{sf.title || sf.supplierName}</p>
+                            <p className="text-xs text-muted-foreground truncate">{sf.supplierName}</p>
+                          </div>
+                          <Badge
+                            variant={sf.status === "new" ? "info" : "success"}
+                            className="text-[10px] shrink-0"
+                          >
+                            {sf.status === "new" ? "Nouveau" : "Interessant"}
+                          </Badge>
+                        </div>
+
+                        <div className="flex items-center gap-3 text-sm">
+                          <div>
+                            <p className="text-xs text-muted-foreground">Prix indicatif</p>
+                            <p className="font-semibold tabular-nums">{formatCurrency(sf.indicativePrice)}{sf.unit ? ` / ${sf.unit}` : ""}</p>
+                          </div>
+                          {sf.currentPrice > 0 && (
+                            <div>
+                              <p className="text-xs text-muted-foreground">Prix actuel</p>
+                              <p className="tabular-nums text-muted-foreground">{formatCurrency(sf.currentPrice)}</p>
+                            </div>
+                          )}
+                          {savingPct !== null && savingPct > 0 && (
+                            <div className="ml-auto text-right">
+                              <p className="text-xs text-muted-foreground">Economie</p>
+                              <p className="font-bold text-green-600 tabular-nums">-{savingPct}%</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {sf.description && (
+                          <p className="text-xs text-muted-foreground line-clamp-2">{sf.description}</p>
+                        )}
+
+                        {sf.source && (
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <span>Source :</span>
+                            {isUrl(sf.source) ? (
+                              <a href={sf.source} target="_blank" rel="noopener noreferrer" className="underline hover:no-underline flex items-center gap-0.5">
+                                Voir <ExternalLink className="size-3" />
+                              </a>
+                            ) : (
+                              <span>{sf.source}</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Empty state when no market data at all */}
+          {marketPrices.length === 0 && sourcingFinds.length === 0 && (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                <Radar className="size-10 mb-3 opacity-30" />
+                <p className="font-medium">Aucune donnee marche</p>
+                <p className="text-sm mt-1 max-w-sm">
+                  Les prix marche et opportunites sourcing apparaitront ici une fois collectes par l&apos;agent.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+        </TabsContent>
+
+      </Tabs>
     </div>
   )
 }

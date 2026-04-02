@@ -1,73 +1,135 @@
 "use client"
 
 import { useState, useEffect, useCallback, useMemo } from "react"
+import Link from "next/link"
 import { PageHeader } from "@/components/layout/page-header"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { KPICard } from "@/components/dashboard/kpi-card"
 import { getPocketBase } from "@/lib/pocketbase"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { toast } from "sonner"
 import {
   Radar,
-  TrendingDown,
-  TrendingUp,
   Euro,
   Eye,
   Package,
   BarChart3,
   Clock,
-  ArrowUpRight,
-  ArrowDownRight,
-  Minus,
-  CheckCircle2,
-  XCircle,
   Star,
   Phone,
-  Filter,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  ArrowRight,
+  CalendarDays,
+  Search,
 } from "lucide-react"
-import type { SourcingFind, MarketPrice, PriceHistory, Activity } from "@/lib/types"
+import type { SourcingFind, MarketPrice, Activity } from "@/lib/types"
 
 // ---------------------------------------------------------------------------
-// Status config
+// Constants
 // ---------------------------------------------------------------------------
 
-const statusConfig: Record<
+const VEILLES_PER_PAGE = 3
+
+const CATEGORY_EMOJI: Record<string, string> = {
+  oeufs: "\u{1F95A}",
+  beurre: "\u{1F9C8}",
+  pommes_de_terre: "\u{1F954}",
+  huile: "\u{1FAD2}",
+  farine: "\u{1F33E}",
+  vin: "\u{1F377}",
+  viande: "\u{1F969}",
+  legumes: "\u{1F955}",
+  fruits: "\u{1F34E}",
+  poisson: "\u{1F41F}",
+  fromage: "\u{1F9C0}",
+  epices: "\u{1F336}\uFE0F",
+}
+
+const STATUS_CONFIG: Record<
   SourcingFind["status"],
-  { label: string; variant: "info" | "success" | "warning" | "secondary" }
+  { label: string; emoji: string; variant: "info" | "success" | "warning" | "secondary" }
 > = {
-  new: { label: "Nouveau", variant: "info" },
-  interesting: { label: "Intéressant", variant: "success" },
-  contacted: { label: "Contacté", variant: "warning" },
-  dismissed: { label: "Écarté", variant: "secondary" },
+  new: { label: "new", emoji: "\u{1F7E2}", variant: "info" },
+  interesting: { label: "intéress.", emoji: "\u{1F7E1}", variant: "success" },
+  contacted: { label: "contacté", emoji: "\u{1F4DE}", variant: "warning" },
+  dismissed: { label: "écarté", emoji: "\u{274C}", variant: "secondary" },
 }
 
+type StatusFilterValue = "active" | "all" | "new" | "interesting" | "contacted" | "dismissed"
+
 // ---------------------------------------------------------------------------
-// Helper types
+// Helpers
 // ---------------------------------------------------------------------------
 
-interface ComparativeRow {
-  productName: string
-  internalPrice: number | null
-  sourcesPrices: Record<string, number | null>
-  bestSource: string | null
-  bestPrice: number | null
-  ecartPct: number | null
-  category: string
+/** Parse numbers from an activity description using common patterns. */
+function parseDescriptionNumbers(desc: string) {
+  const lignesMatch = desc.match(/(\d+)\s*ligne/i)
+  const produitsMatch = desc.match(/(\d+)\s*produit/i)
+  const prixMatch = desc.match(/(\d+)\s*prix/i)
+  const oppsMatch = desc.match(/(\d+)\s*opportunit/i)
+  return {
+    lignes: lignesMatch ? parseInt(lignesMatch[1], 10) : null,
+    produits: produitsMatch ? parseInt(produitsMatch[1], 10) : null,
+    prix: prixMatch ? parseInt(prixMatch[1], 10) : null,
+    opportunites: oppsMatch ? parseInt(oppsMatch[1], 10) : null,
+  }
 }
 
-interface VeilleLogEntry {
-  id: string
-  created: string
-  title: string
-  description: string
-  produitsAnalyses: number | null
-  prixTrouves: number | null
-  opportunites: number | null
+/** Parse source counts from activity description, e.g. "SearXNG (4) · RNM (2)". */
+function parseSourceCounts(desc: string): { source: string; count: number }[] {
+  const results: { source: string; count: number }[] = []
+  const regex = /([A-Za-zÀ-ÿ][\w.-]*)\s*\((\d+)\)/g
+  let match: RegExpExecArray | null
+  while ((match = regex.exec(desc)) !== null) {
+    results.push({ source: match[1], count: parseInt(match[2], 10) })
+  }
+  return results
+}
+
+/** Get the Monday of a given week from a weekOf string (YYYY-MM-DD). */
+function formatWeekHeader(weekOf: string): string {
+  const d = new Date(weekOf + "T00:00:00")
+  return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" })
+}
+
+/** Compute savings percentage for a find. */
+function savingsPct(find: SourcingFind): number {
+  if (find.currentPrice > 0) {
+    return ((find.currentPrice - find.indicativePrice) / find.currentPrice) * 100
+  }
+  return 0
+}
+
+/** Get emoji for a category. */
+function categoryEmoji(category: string): string {
+  const key = category.toLowerCase().replace(/\s+/g, "_")
+  return CATEGORY_EMOJI[key] || "\u{1F4E6}"
 }
 
 // ---------------------------------------------------------------------------
@@ -78,20 +140,18 @@ export default function SourcingPage() {
   // Data states
   const [finds, setFinds] = useState<SourcingFind[]>([])
   const [marketPrices, setMarketPrices] = useState<MarketPrice[]>([])
-  const [priceHistory, setPriceHistory] = useState<PriceHistory[]>([])
   const [activities, setActivities] = useState<Activity[]>([])
-  const [latestVeille, setLatestVeille] = useState<Activity | null>(null)
 
   // Loading states
   const [loadingFinds, setLoadingFinds] = useState(true)
   const [loadingMarket, setLoadingMarket] = useState(true)
   const [loadingActivities, setLoadingActivities] = useState(true)
 
-  // Filter states
-  const [statusFilter, setStatusFilter] = useState("all")
-  const [categoryFilter, setCategoryFilter] = useState("all")
-  const [ecartOnlyToggle, setEcartOnlyToggle] = useState(false)
-  const [sortByField, setSortByField] = useState<"ecart" | "product">("ecart")
+  // Veilles pagination
+  const [veillePage, setVeillePage] = useState(0)
+
+  // Opportunities filter
+  const [statusFilter, setStatusFilter] = useState<StatusFilterValue>("active")
 
   // -------------------------------------------------------------------------
   // Data fetching
@@ -116,22 +176,10 @@ export default function SourcingPage() {
     setLoadingMarket(true)
     try {
       const pb = getPocketBase()
-      const fourWeeksAgo = new Date()
-      fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28)
-      const cutoff = fourWeeksAgo.toISOString().replace("T", " ")
-
-      const [mpResult, phResult] = await Promise.all([
-        pb.collection("market_prices").getList<MarketPrice>(1, 500, {
-          filter: `scrapedAt >= "${cutoff}"`,
-          sort: "-scrapedAt",
-        }),
-        pb.collection("price_history").getList<PriceHistory>(1, 500, {
-          sort: "-date",
-        }),
-      ])
-
-      setMarketPrices(mpResult.items)
-      setPriceHistory(phResult.items)
+      const result = await pb.collection("market_prices").getList<MarketPrice>(1, 500, {
+        sort: "-scrapedAt",
+      })
+      setMarketPrices(result.items)
     } catch {
       /* silent */
     } finally {
@@ -143,14 +191,11 @@ export default function SourcingPage() {
     setLoadingActivities(true)
     try {
       const pb = getPocketBase()
-      const result = await pb.collection("activities").getList<Activity>(1, 20, {
+      const result = await pb.collection("activities").getList<Activity>(1, 100, {
         filter: 'type = "sourcing_search"',
         sort: "-created",
       })
       setActivities(result.items)
-      if (result.items.length > 0) {
-        setLatestVeille(result.items[0])
-      }
     } catch {
       /* silent */
     } finally {
@@ -168,7 +213,7 @@ export default function SourcingPage() {
   // Status update
   // -------------------------------------------------------------------------
 
-  async function updateStatus(id: string, status: string) {
+  async function updateStatus(id: string, status: SourcingFind["status"]) {
     try {
       const pb = getPocketBase()
       await pb.collection("sourcing_finds").update(id, { status })
@@ -185,13 +230,13 @@ export default function SourcingPage() {
 
   const activeFinds = useMemo(
     () => finds.filter((f) => f.status === "new" || f.status === "interesting"),
-    [finds]
+    [finds],
   )
 
   const kpis = useMemo(() => {
     const totalPotentialSaving = activeFinds.reduce(
       (sum, f) => sum + (f.potentialSaving || 0),
-      0
+      0,
     )
     const monthlySaving = totalPotentialSaving * 30
 
@@ -202,752 +247,482 @@ export default function SourcingPage() {
     const uniqueProducts = new Set(marketPrices.map((mp) => mp.productName))
     const productsWatched = uniqueProducts.size
 
+    const findsWithPrice = activeFinds.filter((f) => f.currentPrice > 0)
     const avgSavingPct =
-      activeFinds.length > 0
-        ? activeFinds.reduce((sum, f) => {
-            if (f.currentPrice > 0) {
-              return sum + ((f.currentPrice - f.indicativePrice) / f.currentPrice) * 100
-            }
-            return sum
-          }, 0) / activeFinds.filter((f) => f.currentPrice > 0).length || 0
+      findsWithPrice.length > 0
+        ? findsWithPrice.reduce((sum, f) => sum + savingsPct(f), 0) / findsWithPrice.length
         : 0
 
-    return {
-      monthlySaving,
-      activeProductCount: activeFinds.length,
-      opportunityCount,
-      newCount,
-      interestingCount,
-      productsWatched,
-      avgSavingPct,
-    }
+    return { monthlySaving, opportunityCount, newCount, interestingCount, productsWatched, avgSavingPct }
   }, [finds, activeFinds, marketPrices])
 
   // -------------------------------------------------------------------------
-  // Comparative table data
+  // Veilles timeline data
   // -------------------------------------------------------------------------
 
-  const { comparativeRows, allSources, allCategories } = useMemo(() => {
-    // Build internal price map: productName -> avg unit price
-    const internalMap: Record<string, { total: number; count: number }> = {}
-    for (const ph of priceHistory) {
-      const name = (ph.product || "").trim().toLowerCase()
-      if (!name) continue
-      if (!internalMap[name]) internalMap[name] = { total: 0, count: 0 }
-      internalMap[name].total += ph.price || 0
-      internalMap[name].count += 1
-    }
+  const totalVeillePages = Math.max(1, Math.ceil(activities.length / VEILLES_PER_PAGE))
 
-    // Build market price map: productName -> { source -> latest price }
-    const marketMap: Record<string, Record<string, { price: number; date: string }>> = {}
-    const sourcesSet = new Set<string>()
-    const categoriesSet = new Set<string>()
+  const pagedActivities = useMemo(() => {
+    const start = veillePage * VEILLES_PER_PAGE
+    return activities.slice(start, start + VEILLES_PER_PAGE)
+  }, [activities, veillePage])
 
+  /** Get the weekOf value closest to an activity's created date. */
+  function activityWeekOf(activity: Activity): string {
+    const d = new Date(activity.created)
+    // Find the Monday of that week
+    const day = d.getDay()
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1)
+    const monday = new Date(d.setDate(diff))
+    return monday.toISOString().split("T")[0]
+  }
+
+  /** Get finds for a given activity week. */
+  function findsForWeek(weekOf: string): SourcingFind[] {
+    return finds.filter((f) => f.weekOf === weekOf)
+  }
+
+  /** Get market prices grouped by source for a week. */
+  function sourcesForWeek(activity: Activity): { source: string; count: number }[] {
+    // First try parsing from description
+    const fromDesc = parseSourceCounts(activity.description || "")
+    if (fromDesc.length > 0) return fromDesc
+
+    // Fallback: group market_prices by source for the week
+    const weekOf = activityWeekOf(activity)
+    const weekEnd = new Date(weekOf)
+    weekEnd.setDate(weekEnd.getDate() + 7)
+    const cutoffStart = weekOf
+    const cutoffEnd = weekEnd.toISOString().split("T")[0]
+
+    const sourceCounts: Record<string, number> = {}
     for (const mp of marketPrices) {
-      const name = mp.productName.trim().toLowerCase()
-      const source = mp.source || "Autre"
-      sourcesSet.add(source)
-      if (!marketMap[name]) marketMap[name] = {}
-      const existing = marketMap[name][source]
-      if (!existing || mp.scrapedAt > existing.date) {
-        marketMap[name][source] = { price: mp.price, date: mp.scrapedAt }
+      const scraped = mp.scrapedAt?.split("T")[0] || mp.scrapedAt?.split(" ")[0] || ""
+      if (scraped >= cutoffStart && scraped < cutoffEnd) {
+        sourceCounts[mp.source || "Autre"] = (sourceCounts[mp.source || "Autre"] || 0) + 1
       }
     }
 
-    // Add categories from finds
-    for (const f of finds) {
-      if (f.category) categoriesSet.add(f.category)
-    }
-
-    // Merge all product names
-    const allProductNames = new Set<string>([
-      ...Object.keys(internalMap),
-      ...Object.keys(marketMap),
-    ])
-
-    // Build find category lookup
-    const findCategoryMap: Record<string, string> = {}
-    for (const f of finds) {
-      const name = f.productName.trim().toLowerCase()
-      if (f.category) findCategoryMap[name] = f.category
-    }
-
-    const sources = Array.from(sourcesSet).sort()
-
-    const rows: ComparativeRow[] = []
-    for (const name of allProductNames) {
-      const internal = internalMap[name]
-      const internalPrice = internal ? internal.total / internal.count : null
-
-      const sourcesPrices: Record<string, number | null> = {}
-      for (const s of sources) {
-        sourcesPrices[s] = marketMap[name]?.[s]?.price ?? null
-      }
-
-      // Find best market price
-      let bestPrice: number | null = null
-      let bestSource: string | null = null
-      for (const s of sources) {
-        const p = sourcesPrices[s]
-        if (p !== null && (bestPrice === null || p < bestPrice)) {
-          bestPrice = p
-          bestSource = s
-        }
-      }
-
-      // Ecart %
-      let ecartPct: number | null = null
-      if (internalPrice !== null && bestPrice !== null && internalPrice > 0) {
-        ecartPct = ((internalPrice - bestPrice) / internalPrice) * 100
-      }
-
-      rows.push({
-        productName: name,
-        internalPrice,
-        sourcesPrices,
-        bestSource,
-        bestPrice,
-        ecartPct,
-        category: findCategoryMap[name] || "",
-      })
-    }
-
-    return {
-      comparativeRows: rows,
-      allSources: sources,
-      allCategories: Array.from(categoriesSet).sort(),
-    }
-  }, [marketPrices, priceHistory, finds])
-
-  // Filtered & sorted rows
-  const filteredRows = useMemo(() => {
-    let rows = [...comparativeRows]
-    if (categoryFilter !== "all") {
-      rows = rows.filter((r) => r.category === categoryFilter)
-    }
-    if (ecartOnlyToggle) {
-      rows = rows.filter((r) => r.ecartPct !== null && r.ecartPct > 5)
-    }
-    if (sortByField === "ecart") {
-      rows.sort((a, b) => (b.ecartPct ?? -Infinity) - (a.ecartPct ?? -Infinity))
-    } else {
-      rows.sort((a, b) => a.productName.localeCompare(b.productName))
-    }
-    return rows
-  }, [comparativeRows, categoryFilter, ecartOnlyToggle, sortByField])
-
-  // Split rows by >5% and <=5%
-  const { aboveThreshold, belowThreshold } = useMemo(() => {
-    const above = filteredRows.filter((r) => r.ecartPct !== null && r.ecartPct > 5)
-    const below = filteredRows.filter((r) => r.ecartPct === null || r.ecartPct <= 5)
-    return { aboveThreshold: above, belowThreshold: below }
-  }, [filteredRows])
+    return Object.entries(sourceCounts).map(([source, count]) => ({ source, count }))
+  }
 
   // -------------------------------------------------------------------------
-  // Filtered finds for Section 4
+  // Filtered finds for opportunities table
   // -------------------------------------------------------------------------
 
   const filteredFinds = useMemo(() => {
-    if (statusFilter === "all") return finds
-    return finds.filter((f) => f.status === statusFilter)
+    switch (statusFilter) {
+      case "active":
+        return finds.filter((f) => f.status === "new" || f.status === "interesting")
+      case "all":
+        return finds
+      default:
+        return finds.filter((f) => f.status === statusFilter)
+    }
   }, [finds, statusFilter])
 
-  // -------------------------------------------------------------------------
-  // Veille log entries (parsed)
-  // -------------------------------------------------------------------------
-
-  const veilleEntries = useMemo((): VeilleLogEntry[] => {
-    return activities.slice(0, 10).map((a) => {
-      // Try to parse numbers from description
-      const produitsMatch = a.description?.match(/(\d+)\s*produit/i)
-      const prixMatch = a.description?.match(/(\d+)\s*prix/i)
-      const oppsMatch = a.description?.match(/(\d+)\s*opportunit/i)
-      return {
-        id: a.id,
-        created: a.created,
-        title: a.title || "Veille sourcing",
-        description: a.description || "",
-        produitsAnalyses: produitsMatch ? parseInt(produitsMatch[1], 10) : null,
-        prixTrouves: prixMatch ? parseInt(prixMatch[1], 10) : null,
-        opportunites: oppsMatch ? parseInt(oppsMatch[1], 10) : null,
-      }
-    })
-  }, [activities])
+  const sortedFinds = useMemo(() => {
+    return [...filteredFinds].sort((a, b) => savingsPct(b) - savingsPct(a))
+  }, [filteredFinds])
 
   // -------------------------------------------------------------------------
-  // Header info
-  // -------------------------------------------------------------------------
-
-  const headerText = useMemo(() => {
-    if (!latestVeille) return null
-    const d = new Date(latestVeille.created)
-    const dayNames = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"]
-    const dayName = dayNames[d.getDay()]
-    const dateStr = d.toLocaleDateString("fr-FR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    })
-    const timeStr = d.toLocaleTimeString("fr-FR", {
-      hour: "2-digit",
-      minute: "2-digit",
-    })
-
-    // Parse numbers from description/metadata
-    const desc = latestVeille.description || ""
-    const produitsMatch = desc.match(/(\d+)\s*produit/i)
-    const prixMatch = desc.match(/(\d+)\s*prix/i)
-    const oppsMatch = desc.match(/(\d+)\s*opportunit/i)
-
-    const produits = produitsMatch ? produitsMatch[1] : "?"
-    const prix = prixMatch ? prixMatch[1] : "?"
-    const opps = oppsMatch ? oppsMatch[1] : "?"
-
-    return `Derniere veille : ${dayName} ${dateStr} a ${timeStr} — ${produits} produits · ${prix} prix trouves · ${opps} opportunites`
-  }, [latestVeille])
-
-  // -------------------------------------------------------------------------
-  // Render helpers
+  // Loading flag
   // -------------------------------------------------------------------------
 
   const isLoading = loadingFinds || loadingMarket || loadingActivities
-
-  function formatProductName(name: string) {
-    return name.charAt(0).toUpperCase() + name.slice(1)
-  }
-
-  function renderEcartBadge(ecart: number | null) {
-    if (ecart === null) {
-      return <Badge variant="secondary">N/A</Badge>
-    }
-    if (ecart > 5) {
-      return (
-        <Badge variant="destructive" className="tabular-nums">
-          <ArrowDownRight className="size-3" />-{ecart.toFixed(1)}%
-        </Badge>
-      )
-    }
-    return (
-      <Badge variant="secondary" className="tabular-nums">
-        {ecart > 0 ? `-${ecart.toFixed(1)}%` : `+${Math.abs(ecart).toFixed(1)}%`}
-      </Badge>
-    )
-  }
 
   // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
 
   return (
-    <div className="space-y-6 max-w-[1400px] mx-auto">
-      {/* ================================================================= */}
-      {/* SECTION 1 — Header */}
-      {/* ================================================================= */}
-      <PageHeader
-        title="Radar Sourcing"
-        description="Veille automatisee, comparatif prix marche et opportunites d'achat"
-        sticky
-      >
-        <Button variant="outline" size="sm" disabled className="text-muted-foreground">
-          <Radar className="size-4" />
-          Lancer une veille
-        </Button>
-      </PageHeader>
+    <TooltipProvider delayDuration={200}>
+      <div className="space-y-6 max-w-[1400px] mx-auto">
+        {/* ================================================================= */}
+        {/* HEADER                                                             */}
+        {/* ================================================================= */}
+        <PageHeader
+          title="Radar Sourcing"
+          description="Veille automatisée, comparatif prix marché et opportunités d'achat"
+          sticky
+        >
+          <Button variant="outline" size="sm" disabled className="text-muted-foreground">
+            <Radar className="size-4" />
+            Lancer une veille
+          </Button>
+        </PageHeader>
 
-      {/* Veille status bar */}
-      {loadingActivities ? (
-        <Skeleton className="h-10 rounded-lg" />
-      ) : headerText ? (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-muted/50 border">
-          <Clock className="size-4 text-muted-foreground shrink-0" />
-          <span className="text-muted-foreground">{headerText}</span>
+        {/* ================================================================= */}
+        {/* SECTION 1 — 4 KPI Cards                                           */}
+        {/* ================================================================= */}
+        <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+          {isLoading ? (
+            Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-28 rounded-xl" />
+            ))
+          ) : (
+            <>
+              <KPICard
+                title="Éco. potentielle"
+                value={kpis.monthlySaving > 0 ? formatCurrency(kpis.monthlySaving) : "0 \u20AC"}
+                suffix="/mois"
+                subtitle={
+                  activeFinds.length > 0
+                    ? `sur ${activeFinds.length} produit${activeFinds.length > 1 ? "s" : ""}`
+                    : "aucun produit actif"
+                }
+                icon={Euro}
+                color="green"
+              />
+              <KPICard
+                title="Opportunités actives"
+                value={kpis.opportunityCount.toString()}
+                subtitle={`${kpis.newCount} new \u00B7 ${kpis.interestingCount} int.`}
+                icon={Eye}
+                color="blue"
+              />
+              <KPICard
+                title="Produits surveillés"
+                value={kpis.productsWatched.toString()}
+                subtitle="dans market_prices"
+                icon={Package}
+                color="purple"
+              />
+              <KPICard
+                title="Écart moyen"
+                value={
+                  kpis.avgSavingPct !== 0
+                    ? `-${Math.abs(kpis.avgSavingPct).toFixed(1)}%`
+                    : "0%"
+                }
+                subtitle="vs ton prix"
+                icon={BarChart3}
+                color={kpis.avgSavingPct > 5 ? "red" : "amber"}
+              />
+            </>
+          )}
         </div>
-      ) : (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-muted/50 border">
-          <Clock className="size-4 text-muted-foreground shrink-0" />
-          <span className="text-muted-foreground">
-            Aucune veille enregistree — la veille sourcing tourne automatiquement chaque lundi.
-          </span>
-        </div>
-      )}
 
-      {/* ================================================================= */}
-      {/* SECTION 2 — 4 KPI Cards */}
-      {/* ================================================================= */}
-      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-        {isLoading ? (
-          Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-28 rounded-xl" />
-          ))
-        ) : (
-          <>
-            <KPICard
-              title="Eco. potentielle"
-              value={
-                kpis.monthlySaving > 0
-                  ? formatCurrency(kpis.monthlySaving)
-                  : "0 \u20AC"
-              }
-              suffix="/mois"
-              subtitle={
-                kpis.activeProductCount > 0
-                  ? `sur ${kpis.activeProductCount} produit${kpis.activeProductCount > 1 ? "s" : ""}`
-                  : "aucun produit actif"
-              }
-              icon={Euro}
-              color="green"
-            />
-            <KPICard
-              title="Opportunites"
-              value={kpis.opportunityCount.toString()}
-              subtitle={`${kpis.newCount} new · ${kpis.interestingCount} int.`}
-              icon={Eye}
-              color="blue"
-            />
-            <KPICard
-              title="Produits surveilles"
-              value={kpis.productsWatched.toString()}
-              subtitle={`${kpis.productsWatched} avec prix`}
-              icon={Package}
-              color="purple"
-            />
-            <KPICard
-              title="Ecart moyen"
-              value={
-                kpis.avgSavingPct !== 0
-                  ? `-${Math.abs(kpis.avgSavingPct).toFixed(1)}%`
-                  : "0%"
-              }
-              subtitle="vs ton prix"
-              icon={BarChart3}
-              color={kpis.avgSavingPct > 5 ? "red" : "amber"}
-            />
-          </>
-        )}
-      </div>
+        {/* ================================================================= */}
+        {/* SECTION 2 — VEILLES HEBDOMADAIRES (timeline cards)                */}
+        {/* ================================================================= */}
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold">Veilles hebdomadaires</h2>
 
-      {/* ================================================================= */}
-      {/* SECTION 3 — Comparatif prix marche */}
-      {/* ================================================================= */}
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <CardTitle className="text-lg">Comparatif prix marche</CardTitle>
-              <CardDescription>
-                Ton prix interne vs prix releves chez chaque source
-              </CardDescription>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {allCategories.length > 0 && (
-                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                  <SelectTrigger className="w-40" size="sm">
-                    <SelectValue placeholder="Categorie" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Toutes categories</SelectItem>
-                    {allCategories.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {c}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-              <Button
-                variant={ecartOnlyToggle ? "default" : "outline"}
-                size="sm"
-                onClick={() => setEcartOnlyToggle(!ecartOnlyToggle)}
-              >
-                <Filter className="size-3.5" />
-                Ecart &gt; 5%
-              </Button>
-              <Select value={sortByField} onValueChange={(v) => setSortByField(v as "ecart" | "product")}>
-                <SelectTrigger className="w-36" size="sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ecart">Tri par ecart</SelectItem>
-                  <SelectItem value="product">Tri par produit</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          {loadingMarket ? (
-            <div className="px-6 pb-6 space-y-2">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 w-full rounded" />
+          {loadingActivities ? (
+            <div className="space-y-4">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-40 rounded-xl" />
               ))}
             </div>
-          ) : filteredRows.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground px-6">
-              <BarChart3 className="size-10 mb-3 opacity-30" />
-              <p className="font-medium">Aucune donnee de prix disponible</p>
-              <p className="text-sm mt-1">
-                Les prix marche et l'historique d'achats alimentent ce tableau automatiquement.
-              </p>
-            </div>
+          ) : activities.length === 0 ? (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
+                <Clock className="size-10 mb-3 opacity-30" />
+                <p className="font-medium">Aucune veille enregistrée</p>
+                <p className="text-sm mt-1">
+                  La prochaine veille automatique est prévue lundi à 10h.
+                </p>
+              </CardContent>
+            </Card>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Produit</TableHead>
-                  <TableHead className="text-right">Ton prix</TableHead>
-                  {allSources.map((s) => (
-                    <TableHead key={s} className="text-right">
-                      {s}
-                    </TableHead>
-                  ))}
-                  <TableHead>Meilleur</TableHead>
-                  <TableHead className="text-right">Ecart</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {/* Above threshold rows */}
-                {aboveThreshold.map((row) => (
-                  <TableRow key={row.productName} className="bg-red-50/30 dark:bg-red-900/5">
-                    <TableCell className="font-medium">
-                      {formatProductName(row.productName)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {row.internalPrice !== null
-                        ? formatCurrency(row.internalPrice)
-                        : <span className="text-muted-foreground">--</span>}
-                    </TableCell>
-                    {allSources.map((s) => (
-                      <TableCell key={s} className="text-right tabular-nums">
-                        {row.sourcesPrices[s] !== null
-                          ? formatCurrency(row.sourcesPrices[s]!)
-                          : <span className="text-muted-foreground">--</span>}
-                      </TableCell>
-                    ))}
-                    <TableCell>
-                      {row.bestSource ? (
-                        <Badge variant="success" className="text-xs">
-                          {row.bestSource}
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground">--</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {renderEcartBadge(row.ecartPct)}
-                    </TableCell>
-                  </TableRow>
-                ))}
+            <>
+              <div className="space-y-4">
+                {pagedActivities.map((activity) => {
+                  const weekOf = activityWeekOf(activity)
+                  const parsed = parseDescriptionNumbers(activity.description || "")
+                  const weekFinds = findsForWeek(weekOf)
+                  const newFindsCount = weekFinds.filter((f) => f.status === "new" || f.status === "interesting").length
+                  const sources = sourcesForWeek(activity)
 
-                {/* Separator if both sections have data */}
-                {aboveThreshold.length > 0 && belowThreshold.length > 0 && !ecartOnlyToggle && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={3 + allSources.length}
-                      className="py-1 bg-muted/30 text-center text-xs text-muted-foreground font-medium"
-                    >
-                      Ecarts &le; 5% ci-dessous
-                    </TableCell>
-                  </TableRow>
-                )}
+                  // Top opportunities for this week sorted by savings %
+                  const topOpps = [...weekFinds]
+                    .map((f) => ({ ...f, pct: savingsPct(f) }))
+                    .filter((f) => f.pct > 0)
+                    .sort((a, b) => b.pct - a.pct)
+                    .slice(0, 5)
 
-                {/* Below threshold rows */}
-                {!ecartOnlyToggle &&
-                  belowThreshold.map((row) => (
-                    <TableRow key={row.productName}>
-                      <TableCell className="font-medium">
-                        {formatProductName(row.productName)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {row.internalPrice !== null
-                          ? formatCurrency(row.internalPrice)
-                          : <span className="text-muted-foreground">--</span>}
-                      </TableCell>
-                      {allSources.map((s) => (
-                        <TableCell key={s} className="text-right tabular-nums">
-                          {row.sourcesPrices[s] !== null
-                            ? formatCurrency(row.sourcesPrices[s]!)
-                            : <span className="text-muted-foreground">--</span>}
-                        </TableCell>
-                      ))}
-                      <TableCell>
-                        {row.bestSource ? (
-                          <Badge variant="outline" className="text-xs">
-                            {row.bestSource}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">--</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {renderEcartBadge(row.ecartPct)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ================================================================= */}
-      {/* SECTION 4 — Opportunites (cards) */}
-      {/* ================================================================= */}
-      <div className="space-y-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-lg font-semibold">Opportunites</h2>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-44" size="sm">
-              <SelectValue placeholder="Tous les statuts" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Tous les statuts</SelectItem>
-              <SelectItem value="new">Nouveaux</SelectItem>
-              <SelectItem value="interesting">Interessants</SelectItem>
-              <SelectItem value="contacted">Contactes</SelectItem>
-              <SelectItem value="dismissed">Ecartes</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {loadingFinds ? (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <Skeleton key={i} className="h-56 rounded-xl" />
-            ))}
-          </div>
-        ) : filteredFinds.length === 0 ? (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
-              <Radar className="size-10 mb-3 opacity-30" />
-              <p className="font-medium">Aucune opportunite pour ce filtre</p>
-              <p className="text-sm mt-1">
-                L'agent sourcing tourne chaque lundi matin et alimente ce tableau automatiquement.
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filteredFinds.map((find) => {
-              const st = statusConfig[find.status] || statusConfig.new
-              const savingPct =
-                find.currentPrice > 0
-                  ? ((find.currentPrice - find.indicativePrice) / find.currentPrice) * 100
-                  : 0
-              const monthlySavingEstimate = (find.potentialSaving || 0) * 30
-
-              return (
-                <Card key={find.id} className="flex flex-col gap-3 py-4">
-                  <CardHeader className="px-4 pb-0">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="text-base font-semibold leading-snug truncate">
-                          {find.productName || find.title}
+                  return (
+                    <Card key={activity.id} className="overflow-hidden">
+                      <CardHeader className="pb-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex items-center gap-2">
+                            <CalendarDays className="size-4 text-muted-foreground shrink-0" />
+                            <CardTitle className="text-base">
+                              Semaine du {formatWeekHeader(weekOf)}
+                            </CardTitle>
+                          </div>
+                          {newFindsCount > 0 && (
+                            <Badge variant="info">
+                              {newFindsCount} nouvelle{newFindsCount > 1 ? "s" : ""} opport.
+                            </Badge>
+                          )}
                         </div>
-                        {find.supplierName && (
-                          <div className="text-sm text-muted-foreground mt-0.5">
-                            {find.supplierName}
+                      </CardHeader>
+                      <CardContent className="space-y-3 pt-0">
+                        {/* Stats line */}
+                        <p className="text-sm text-muted-foreground">
+                          {[
+                            parsed.lignes !== null ? `${parsed.lignes} lignes analysées` : null,
+                            parsed.produits !== null ? `${parsed.produits} produits` : null,
+                            parsed.prix !== null ? `${parsed.prix} prix trouvés` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" \u00B7 ") || activity.title || "Veille sourcing"}
+                        </p>
+
+                        {/* Top opportunities */}
+                        {topOpps.length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {topOpps.map((opp) => {
+                              const isAlert = opp.pct > 20
+                              return (
+                                <span
+                                  key={opp.id}
+                                  className={`inline-flex items-center gap-1 text-sm px-2 py-0.5 rounded-md ${
+                                    isAlert
+                                      ? "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400"
+                                      : "bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400"
+                                  }`}
+                                >
+                                  {isAlert && "\u{1F6A8}"}
+                                  {categoryEmoji(opp.category)} {opp.productName}{" "}
+                                  <span className="font-semibold tabular-nums">
+                                    -{opp.pct.toFixed(0)}%
+                                  </span>
+                                </span>
+                              )
+                            })}
                           </div>
                         )}
-                      </div>
-                      <Badge variant={st.variant} className="shrink-0">
-                        {st.label}
-                      </Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="px-4 flex-1 flex flex-col gap-3">
-                    {find.description && (
-                      <p className="text-sm text-muted-foreground line-clamp-2">
-                        {find.description}
-                      </p>
-                    )}
 
-                    {/* Price comparison */}
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div className="bg-muted/50 rounded-md p-2">
-                        <p className="text-xs text-muted-foreground">Ton prix</p>
-                        <p className="font-semibold">
-                          {find.currentPrice
-                            ? formatCurrency(find.currentPrice)
-                            : "--"}
-                          <span className="text-xs font-normal text-muted-foreground">
-                            /{find.unit || "u"}
-                          </span>
-                        </p>
-                      </div>
-                      <div className="bg-green-50 dark:bg-green-900/20 rounded-md p-2">
-                        <p className="text-xs text-muted-foreground">Prix trouve</p>
-                        <p className="font-semibold text-green-700 dark:text-green-400">
-                          {find.indicativePrice
-                            ? formatCurrency(find.indicativePrice)
-                            : "--"}
-                          <span className="text-xs font-normal text-muted-foreground">
-                            /{find.unit || "u"}
-                          </span>
-                        </p>
-                      </div>
-                    </div>
+                        {/* Sources line */}
+                        {sources.length > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            Sources :{" "}
+                            {sources
+                              .map((s) => `${s.source} (${s.count})`)
+                              .join(" \u00B7 ")}
+                          </p>
+                        )}
 
-                    {/* Savings progress bar */}
-                    {savingPct > 0 && (
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="flex items-center gap-1.5 text-green-600 dark:text-green-400 font-medium">
-                            <TrendingDown className="size-4" />-{savingPct.toFixed(0)}%
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            Eco. {formatCurrency(find.potentialSaving || 0)}
-                          </span>
-                        </div>
-                        <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-green-500 rounded-full transition-all"
-                            style={{
-                              width: `${Math.min(savingPct, 100)}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Monthly estimate */}
-                    {monthlySavingEstimate > 0 && (
-                      <div className="text-sm text-muted-foreground">
-                        ~{formatCurrency(monthlySavingEstimate)}/mois estime
-                      </div>
-                    )}
-
-                    {/* Meta */}
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      {find.source && (
-                        <Badge variant="outline" className="text-[10px]">
-                          {find.source}
-                        </Badge>
-                      )}
-                      {find.category && (
-                        <Badge variant="outline" className="text-[10px]">
-                          {find.category}
-                        </Badge>
-                      )}
-                      {find.weekOf && <span>{formatDate(find.weekOf)}</span>}
-                    </div>
-
-                    {/* Action buttons */}
-                    <div className="flex gap-2 mt-auto pt-2">
-                      {find.status === "new" && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="flex-1 text-green-600 border-green-200 hover:bg-green-50 dark:hover:bg-green-900/20"
-                          onClick={() => updateStatus(find.id, "interesting")}
+                        {/* Report link */}
+                        <Link
+                          href={`/sourcing/${activity.id}`}
+                          className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
                         >
-                          <Star className="size-3.5" />
-                          Interessant
-                        </Button>
-                      )}
-                      {(find.status === "new" || find.status === "interesting") && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="flex-1"
-                          onClick={() => updateStatus(find.id, "contacted")}
-                        >
-                          <Phone className="size-3.5" />
-                          Contacte
-                        </Button>
-                      )}
-                      {find.status !== "dismissed" && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-muted-foreground"
-                          onClick={() => updateStatus(find.id, "dismissed")}
-                        >
-                          <XCircle className="size-3.5" />
-                          Ecarter
-                        </Button>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })}
-          </div>
-        )}
-      </div>
+                          Voir le rapport complet
+                          <ArrowRight className="size-3.5" />
+                        </Link>
+                      </CardContent>
+                    </Card>
+                  )
+                })}
+              </div>
 
-      {/* ================================================================= */}
-      {/* SECTION 5 — Journal des veilles */}
-      {/* ================================================================= */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Journal des veilles</CardTitle>
-          <CardDescription>
-            Historique des executions de l'agent sourcing
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          {loadingActivities ? (
-            <div className="px-6 pb-6 space-y-2">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={i} className="h-10 w-full rounded" />
-              ))}
-            </div>
-          ) : veilleEntries.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground px-6">
-              <Clock className="size-10 mb-3 opacity-30" />
-              <p className="font-medium">Aucune veille enregistree</p>
-              <p className="text-sm mt-1">
-                Le journal se remplit automatiquement a chaque execution de la veille sourcing.
-              </p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead className="text-right">Produits analyses</TableHead>
-                  <TableHead className="text-right">Prix trouves</TableHead>
-                  <TableHead className="text-right">Opportunites</TableHead>
-                  <TableHead>Detail</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {veilleEntries.map((entry) => (
-                  <TableRow key={entry.id}>
-                    <TableCell className="font-medium">
-                      {formatDate(entry.created)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {entry.produitsAnalyses !== null ? (
-                        entry.produitsAnalyses
-                      ) : (
-                        <span className="text-muted-foreground">--</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {entry.prixTrouves !== null ? (
-                        entry.prixTrouves
-                      ) : (
-                        <span className="text-muted-foreground">--</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {entry.opportunites !== null ? (
-                        entry.opportunites
-                      ) : (
-                        <span className="text-muted-foreground">--</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="max-w-[300px] truncate text-sm text-muted-foreground">
-                      {entry.description || entry.title}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+              {/* Pagination */}
+              {activities.length > VEILLES_PER_PAGE && (
+                <div className="flex items-center justify-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={veillePage === 0}
+                    onClick={() => setVeillePage((p) => Math.max(0, p - 1))}
+                  >
+                    <ChevronLeft className="size-4" />
+                    Précédent
+                  </Button>
+                  <span className="text-sm text-muted-foreground tabular-nums">
+                    {veillePage + 1} / {totalVeillePages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={veillePage >= totalVeillePages - 1}
+                    onClick={() => setVeillePage((p) => Math.min(totalVeillePages - 1, p + 1))}
+                  >
+                    Suivant
+                    <ChevronRight className="size-4" />
+                  </Button>
+                </div>
+              )}
+            </>
           )}
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+
+        {/* ================================================================= */}
+        {/* SECTION 3 — OPPORTUNITÉS EN COURS (compact table)                 */}
+        {/* ================================================================= */}
+        <div className="space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-lg font-semibold">Opportunités en cours</h2>
+            <Select
+              value={statusFilter}
+              onValueChange={(v) => setStatusFilter(v as StatusFilterValue)}
+            >
+              <SelectTrigger className="w-52" size="sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">new + intéressant</SelectItem>
+                <SelectItem value="all">tous</SelectItem>
+                <SelectItem value="new">new</SelectItem>
+                <SelectItem value="interesting">intéressant</SelectItem>
+                <SelectItem value="contacted">contacté</SelectItem>
+                <SelectItem value="dismissed">écarté</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <Card>
+            <CardContent className="p-0">
+              {loadingFinds ? (
+                <div className="px-6 py-6 space-y-2">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <Skeleton key={i} className="h-10 w-full rounded" />
+                  ))}
+                </div>
+              ) : sortedFinds.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground px-6">
+                  <Search className="size-10 mb-3 opacity-30" />
+                  <p className="font-medium">Aucune opportunité pour ce filtre</p>
+                  <p className="text-sm mt-1">
+                    L'agent sourcing tourne chaque lundi matin et alimente ce tableau automatiquement.
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Produit</TableHead>
+                        <TableHead className="text-right">Écart</TableHead>
+                        <TableHead>Source</TableHead>
+                        <TableHead>Semaine</TableHead>
+                        <TableHead>Statut</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {sortedFinds.map((find) => {
+                        const pct = savingsPct(find)
+                        const st = STATUS_CONFIG[find.status]
+
+                        return (
+                          <TableRow key={find.id}>
+                            {/* Produit */}
+                            <TableCell className="font-medium whitespace-nowrap">
+                              <span className="mr-1.5">{categoryEmoji(find.category)}</span>
+                              {find.productName}
+                            </TableCell>
+
+                            {/* Écart */}
+                            <TableCell className="text-right tabular-nums whitespace-nowrap">
+                              {pct > 0 ? (
+                                <span
+                                  className={
+                                    pct > 15
+                                      ? "text-red-600 dark:text-red-400 font-semibold"
+                                      : pct > 5
+                                        ? "text-amber-600 dark:text-amber-400 font-semibold"
+                                        : "text-muted-foreground"
+                                  }
+                                >
+                                  -{pct.toFixed(1)}%
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">--</span>
+                              )}
+                            </TableCell>
+
+                            {/* Source */}
+                            <TableCell>
+                              {find.source ? (
+                                <Badge variant="outline" className="text-xs">
+                                  {find.source}
+                                </Badge>
+                              ) : (
+                                <span className="text-muted-foreground">--</span>
+                              )}
+                            </TableCell>
+
+                            {/* Semaine */}
+                            <TableCell className="text-sm tabular-nums whitespace-nowrap">
+                              {find.weekOf
+                                ? formatDate(find.weekOf)
+                                : "--"}
+                            </TableCell>
+
+                            {/* Statut */}
+                            <TableCell>
+                              <Badge variant={st.variant} className="text-xs">
+                                {st.emoji} {st.label}
+                              </Badge>
+                            </TableCell>
+
+                            {/* Actions */}
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                {find.status !== "interesting" && find.status !== "dismissed" && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="size-7 text-amber-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+                                        onClick={() => updateStatus(find.id, "interesting")}
+                                      >
+                                        <Star className="size-3.5" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Marquer intéressant</TooltipContent>
+                                  </Tooltip>
+                                )}
+
+                                {(find.status === "new" || find.status === "interesting") && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="size-7 text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                        onClick={() => updateStatus(find.id, "contacted")}
+                                      >
+                                        <Phone className="size-3.5" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Marquer contacté</TooltipContent>
+                                  </Tooltip>
+                                )}
+
+                                {find.status !== "dismissed" && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="size-7 text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+                                        onClick={() => updateStatus(find.id, "dismissed")}
+                                      >
+                                        <X className="size-3.5" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Écarter</TooltipContent>
+                                  </Tooltip>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </TooltipProvider>
   )
 }
