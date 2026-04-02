@@ -3,11 +3,11 @@
 import { useState, useEffect } from "react"
 import { PageHeader } from "@/components/layout/page-header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { getPocketBase } from "@/lib/pocketbase"
+import { SourceLink } from "@/components/dashboard/source-link"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { Search, TrendingUp } from "lucide-react"
 import type { MarketPrice } from "@/lib/types"
@@ -104,7 +104,7 @@ export default function MarketPricesPage() {
                         <TableCell className="text-right tabular-nums font-semibold">{formatCurrency(price.price)}</TableCell>
                         <TableCell className="text-muted-foreground">{price.unit || "—"}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="text-xs">{price.source || "—"}</Badge>
+                          <SourceLink source={price.source} sourceUrl={price.sourceUrl} />
                         </TableCell>
                         <TableCell className="text-muted-foreground">{price.scrapedAt ? formatDate(price.scrapedAt) : "—"}</TableCell>
                       </TableRow>

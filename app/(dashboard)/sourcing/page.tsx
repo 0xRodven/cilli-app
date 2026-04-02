@@ -29,6 +29,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { SourceLink } from "@/components/dashboard/source-link"
 import { KPICard } from "@/components/dashboard/kpi-card"
 import { getPocketBase } from "@/lib/pocketbase"
 import { formatCurrency, formatDate } from "@/lib/utils"
@@ -793,21 +794,7 @@ export default function SourcingPage() {
 
                             {/* Source */}
                             <TableCell>
-                              {find.source ? (
-                                <a
-                                  href={find.source.startsWith("http") ? find.source : `https://${find.source}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1"
-                                >
-                                  <Badge variant="outline" className="text-xs hover:bg-accent transition-colors">
-                                    {find.source}
-                                    <ExternalLink className="size-2.5 ml-0.5 opacity-50" />
-                                  </Badge>
-                                </a>
-                              ) : (
-                                <span className="text-muted-foreground">--</span>
-                              )}
+                              <SourceLink source={find.source} sourceUrl={find.sourceUrl} />
                             </TableCell>
 
                             {/* Semaine */}

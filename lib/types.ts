@@ -198,6 +198,7 @@ export interface SourcingFind {
   currentPrice: number
   potentialSaving: number
   source: string
+  sourceUrl: string
   category: string
   tags: string[]
   status: "new" | "interesting" | "contacted" | "dismissed"
@@ -214,5 +215,6 @@ export interface MarketPrice {
   price: number
   unit: string
   source: string
+  sourceUrl: string
   scrapedAt: string
 }
