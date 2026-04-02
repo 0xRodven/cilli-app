@@ -1,17 +1,17 @@
 import { NextResponse } from "next/server"
 
 const BOT_TOKEN = "8772491229:AAHYEKH86Ps2Z42MPXUzdCMb0eHR5ZkZjE8"
-const OUSMANE_CHAT_ID = "6232011371"
+const SOURCING_GROUP_ID = "-5212665597"
 
 export async function POST() {
   try {
-    const message = `🔍 Veille sourcing manuelle déclenchée depuis le dashboard.\n\nLance la veille prix maintenant : interroge les sources (SearXNG, RNM, MIN Lomme, Promocash, Transgourmet) et mets à jour market_prices + sourcing_finds dans PocketBase. Stocke le sourceUrl (lien direct) pour chaque prix trouvé.`
+    const message = `Veille sourcing maintenant — skill sourcing-radar. Utilise Tavily + RNM FranceAgriMer, PAS SearXNG. Stocke le sourceUrl (lien direct) pour chaque prix trouvé.`
 
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: OUSMANE_CHAT_ID,
+        chat_id: SOURCING_GROUP_ID,
         text: message,
       }),
     })
