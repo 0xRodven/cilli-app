@@ -43,9 +43,19 @@ export default function ImportPage() {
         formData.append("progress", "0")
         await pb.collection("imports").create(formData)
       }
-      toast.success(`${files.length} fichier${files.length > 1 ? "s" : ""} uploadé${files.length > 1 ? "s" : ""}`)
+      toast.success(`${files.length} fichier${files.length > 1 ? "s" : ""} uploadé${files.length > 1 ? "s" : ""} — traitement OCR lancé`)
       const result = await pb.collection("imports").getList<Import>(1, 20, { sort: "-created" })
       setImports(result.items)
+      // Trigger immediate processing via bot
+      for (const item of result.items) {
+        if (item.status === "uploading") {
+          fetch("/api/trigger-import", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ importId: item.id, filename: item.filename }),
+          }).catch(() => { /* silent — cron will catch it anyway */ })
+        }
+      }
     } catch (err) {
       toast.error("Erreur lors de l'upload")
     } finally {
