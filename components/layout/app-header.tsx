@@ -16,7 +16,6 @@ import {
   Upload,
   Settings,
   Radar,
-  TrendingUp,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
@@ -46,7 +45,6 @@ const navSections = [
     title: "VEILLE",
     items: [
       { title: "Sourcing", href: "/sourcing", icon: Radar, disabled: true },
-      { title: "Prix marché", href: "/market-prices", icon: TrendingUp, disabled: true },
     ],
   },
   {
@@ -66,7 +64,6 @@ const pageTitles: Record<string, string> = {
   "/products": "Produits",
   "/anomalies": "Alertes",
   "/sourcing": "Sourcing",
-  "/market-prices": "Prix marché",
   "/import": "Import",
   "/settings": "Paramètres",
 }

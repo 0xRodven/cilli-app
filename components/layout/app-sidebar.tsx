@@ -14,7 +14,6 @@ import {
   Settings,
   ChefHat,
   Radar,
-  TrendingUp,
   LogOut,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -55,7 +54,6 @@ const navSections: NavSection[] = [
     title: "Veille",
     items: [
       { title: "Sourcing", href: "/sourcing", icon: Radar },
-      { title: "Prix marché", href: "/market-prices", icon: TrendingUp },
     ],
   },
   {
