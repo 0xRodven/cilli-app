@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useCallback } from "react"
 import { useSearchParams } from "next/navigation"
 import { PageHeader } from "@/components/layout/page-header"
 import { Card, CardContent } from "@/components/ui/card"
@@ -9,12 +9,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useInvoices } from "@/hooks/use-invoices"
 import { useDateFilter, computeDateRange, type DatePreset } from "@/contexts/date-filter-context"
+import { getPocketBase } from "@/lib/pocketbase"
 import { formatCurrency, formatDate } from "@/lib/utils"
-import { Search, ChevronLeft, ChevronRight, FileText } from "lucide-react"
-import type { Invoice } from "@/lib/types"
+import { Search, ChevronLeft, ChevronRight, FileText, Eye } from "lucide-react"
+import type { Invoice, Import } from "@/lib/types"
 
 // --- Status config ---
 const statusConfig: Record<string, { label: string; className: string }> = {
@@ -71,7 +73,25 @@ export default function InvoicesPage() {
     GLOBAL_PERIODS.includes(globalPreset as Period) ? (globalPreset as Period) : "3_months"
   )
   const [amountRange, setAmountRange] = useState<AmountRange>("all")
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [previewTitle, setPreviewTitle] = useState("")
   const perPage = 20
+
+  const openPdfPreview = useCallback(async (invoice: Invoice) => {
+    try {
+      const pb = getPocketBase()
+      // Find the import record linked to this invoice
+      const result = await pb.collection("imports").getList<Import>(1, 1, {
+        filter: `invoice = "${invoice.id}"`,
+      })
+      if (result.items.length > 0 && result.items[0].file) {
+        const imp = result.items[0]
+        const url = `${pb.baseURL}/api/files/imports/${imp.id}/${imp.file}`
+        setPreviewUrl(url)
+        setPreviewTitle(`${invoice.supplierName} — ${invoice.invoiceNumber}`)
+      }
+    } catch { /* no import linked */ }
+  }, [])
 
   const { dateFrom, dateTo } = useMemo(() => {
     if (period === "all") return { dateFrom: undefined, dateTo: undefined }
@@ -227,20 +247,21 @@ export default function InvoicesPage() {
                 <TableHead className="text-right">Montant TTC</TableHead>
                 <TableHead>Statut</TableHead>
                 <TableHead>Source</TableHead>
+                <TableHead className="w-10"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
                 Array.from({ length: 10 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: 8 }).map((__, j) => (
+                    {Array.from({ length: 9 }).map((__, j) => (
                       <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                     ))}
                   </TableRow>
                 ))
               ) : invoices.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="py-16">
+                  <TableCell colSpan={9} className="py-16">
                     <div className="flex flex-col items-center gap-3 text-muted-foreground">
                       <FileText className="size-10 opacity-30" />
                       <div className="text-center">
@@ -299,6 +320,17 @@ export default function InvoicesPage() {
                       <TableCell className="text-xs text-muted-foreground">
                         {sourceLabels[sourceChannel] || sourceChannel || "—"}
                       </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-7"
+                          title="Voir le PDF"
+                          onClick={(e) => { e.stopPropagation(); openPdfPreview(invoice) }}
+                        >
+                          <Eye className="size-3.5 text-muted-foreground" />
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   )
                 })
@@ -337,6 +369,28 @@ export default function InvoicesPage() {
           </div>
         </div>
       )}
+
+      {/* PDF Preview Dialog */}
+      <Dialog open={!!previewUrl} onOpenChange={(open) => !open && setPreviewUrl(null)}>
+        <DialogContent className="max-w-4xl h-[85vh] flex flex-col p-0">
+          <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
+            <DialogTitle className="text-base truncate">{previewTitle}</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 min-h-0 px-6 pb-6">
+            {previewUrl ? (
+              <iframe
+                src={previewUrl}
+                className="w-full h-full rounded-md border"
+                title={previewTitle}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                Aucun PDF lié à cette facture
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
