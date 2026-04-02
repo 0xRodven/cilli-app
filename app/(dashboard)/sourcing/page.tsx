@@ -28,6 +28,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { KPICard } from "@/components/dashboard/kpi-card"
 import { getPocketBase } from "@/lib/pocketbase"
 import { formatCurrency, formatDate } from "@/lib/utils"
@@ -47,8 +48,9 @@ import {
   ArrowRight,
   CalendarDays,
   Search,
+  ExternalLink,
 } from "lucide-react"
-import type { SourcingFind, MarketPrice, Activity } from "@/lib/types"
+import type { SourcingFind, MarketPrice, Activity, Product } from "@/lib/types"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -141,6 +143,7 @@ export default function SourcingPage() {
   const [finds, setFinds] = useState<SourcingFind[]>([])
   const [marketPrices, setMarketPrices] = useState<MarketPrice[]>([])
   const [activities, setActivities] = useState<Activity[]>([])
+  const [products, setProducts] = useState<Product[]>([])
 
   // Loading states
   const [loadingFinds, setLoadingFinds] = useState(true)
@@ -162,7 +165,7 @@ export default function SourcingPage() {
     try {
       const pb = getPocketBase()
       const result = await pb.collection("sourcing_finds").getList<SourcingFind>(1, 200, {
-        sort: "-weekOf,-created",
+        sort: "-weekOf",
       })
       setFinds(result.items)
     } catch {
@@ -203,11 +206,20 @@ export default function SourcingPage() {
     }
   }, [])
 
+  const fetchProducts = useCallback(async () => {
+    try {
+      const pb = getPocketBase()
+      const result = await pb.collection("products").getList<Product>(1, 500, { sort: "name" })
+      setProducts(result.items)
+    } catch { /* silent */ }
+  }, [])
+
   useEffect(() => {
     fetchFinds()
     fetchMarketData()
     fetchActivities()
-  }, [fetchFinds, fetchMarketData, fetchActivities])
+    fetchProducts()
+  }, [fetchFinds, fetchMarketData, fetchActivities, fetchProducts])
 
   // -------------------------------------------------------------------------
   // Status update
@@ -253,8 +265,15 @@ export default function SourcingPage() {
         ? findsWithPrice.reduce((sum, f) => sum + savingsPct(f), 0) / findsWithPrice.length
         : 0
 
-    return { monthlySaving, opportunityCount, newCount, interestingCount, productsWatched, avgSavingPct }
+    return { monthlySaving, totalPotentialSaving, opportunityCount, newCount, interestingCount, productsWatched, avgSavingPct }
   }, [finds, activeFinds, marketPrices])
+
+  /** Find product ID from product name */
+  function findProductId(productName: string): string | null {
+    const lower = productName.toLowerCase()
+    const p = products.find((pr) => pr.name.toLowerCase() === lower)
+    return p ? p.id : null
+  }
 
   // -------------------------------------------------------------------------
   // Veilles timeline data
@@ -279,7 +298,9 @@ export default function SourcingPage() {
 
   /** Get finds for a given activity week. */
   function findsForWeek(weekOf: string): SourcingFind[] {
-    return finds.filter((f) => f.weekOf === weekOf)
+    const norm = (s: string) => (s || "").split(" ")[0].split("T")[0]
+    const target = norm(weekOf)
+    return finds.filter((f) => norm(f.weekOf) === target)
   }
 
   /** Get market prices grouped by source for a week. */
@@ -332,6 +353,29 @@ export default function SourcingPage() {
   const isLoading = loadingFinds || loadingMarket || loadingActivities
 
   // -------------------------------------------------------------------------
+  // Trigger sourcing
+  // -------------------------------------------------------------------------
+
+  const [triggeringSourcing, setTriggeringSourcing] = useState(false)
+
+  async function triggerSourcing() {
+    setTriggeringSourcing(true)
+    try {
+      const res = await fetch("/api/trigger-sourcing", { method: "POST" })
+      const data = await res.json()
+      if (data.ok) {
+        toast.success("Veille lancée ! L'agent sourcing va analyser les prix.")
+      } else {
+        toast.error("Erreur : " + (data.error || "échec du déclenchement"))
+      }
+    } catch {
+      toast.error("Impossible de contacter le serveur")
+    } finally {
+      setTriggeringSourcing(false)
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
 
@@ -346,9 +390,14 @@ export default function SourcingPage() {
           description="Veille automatisée, comparatif prix marché et opportunités d'achat"
           sticky
         >
-          <Button variant="outline" size="sm" disabled className="text-muted-foreground">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={triggerSourcing}
+            disabled={triggeringSourcing}
+          >
             <Radar className="size-4" />
-            Lancer une veille
+            {triggeringSourcing ? "Lancement..." : "Lancer une veille"}
           </Button>
         </PageHeader>
 
@@ -362,29 +411,124 @@ export default function SourcingPage() {
             ))
           ) : (
             <>
-              <KPICard
-                title="Éco. potentielle"
-                value={kpis.monthlySaving > 0 ? formatCurrency(kpis.monthlySaving) : "0 \u20AC"}
-                suffix="/mois"
-                subtitle={
-                  activeFinds.length > 0
-                    ? `sur ${activeFinds.length} produit${activeFinds.length > 1 ? "s" : ""}`
-                    : "aucun produit actif"
-                }
-                icon={Euro}
-                color="green"
-              />
-              <KPICard
-                title="Opportunités actives"
-                value={kpis.opportunityCount.toString()}
-                subtitle={`${kpis.newCount} new \u00B7 ${kpis.interestingCount} int.`}
-                icon={Eye}
-                color="blue"
-              />
+              {/* Éco. potentielle — avec popover produits */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <div>
+                    <KPICard
+                      title="Économie potentielle"
+                      value={kpis.monthlySaving > 0 ? formatCurrency(kpis.monthlySaving) : "0 €"}
+                      suffix="/mois"
+                      subtitle={
+                        activeFinds.length > 0
+                          ? `sur ${activeFinds.length} produit${activeFinds.length > 1 ? "s" : ""}`
+                          : "aucun produit actif"
+                      }
+                      icon={Euro}
+                      color="green"
+                      className="cursor-pointer hover:shadow-md transition-shadow"
+                    />
+                  </div>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-80 backdrop-blur-xl bg-white/80 dark:bg-zinc-900/80 border border-white/20 shadow-2xl rounded-xl"
+                  side="bottom"
+                  align="start"
+                >
+                  <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
+                    Détail par produit
+                  </p>
+                  <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                    {activeFinds.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Aucune opportunité active</p>
+                    ) : (
+                      activeFinds
+                        .sort((a, b) => (b.potentialSaving || 0) - (a.potentialSaving || 0))
+                        .map((f) => {
+                          const pid = findProductId(f.productName)
+                          return (
+                            <Link
+                              key={f.id}
+                              href={pid ? `/products/${pid}` : "#"}
+                              className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors group"
+                            >
+                              <span className="text-sm truncate">
+                                {categoryEmoji(f.category)} {f.productName}
+                              </span>
+                              <span className="text-xs font-semibold tabular-nums text-green-600 dark:text-green-400 shrink-0">
+                                -{formatCurrency(f.potentialSaving || 0)}
+                              </span>
+                            </Link>
+                          )
+                        })
+                    )}
+                  </div>
+                  {activeFinds.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-black/5 dark:border-white/10 flex justify-between text-xs font-medium">
+                      <span className="text-muted-foreground">Total / unité</span>
+                      <span className="text-green-600 dark:text-green-400">
+                        {formatCurrency(activeFinds.reduce((s, f) => s + (f.potentialSaving || 0), 0))}
+                      </span>
+                    </div>
+                  )}
+                </PopoverContent>
+              </Popover>
+
+              {/* Opportunités actives — avec popover */}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <div>
+                    <KPICard
+                      title="Opportunités actives"
+                      value={kpis.opportunityCount.toString()}
+                      subtitle={`${kpis.newCount} nouvelle${kpis.newCount > 1 ? "s" : ""} · ${kpis.interestingCount} intéressante${kpis.interestingCount > 1 ? "s" : ""}`}
+                      icon={Eye}
+                      color="blue"
+                      className="cursor-pointer hover:shadow-md transition-shadow"
+                    />
+                  </div>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-80 backdrop-blur-xl bg-white/80 dark:bg-zinc-900/80 border border-white/20 shadow-2xl rounded-xl"
+                  side="bottom"
+                  align="start"
+                >
+                  <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wider">
+                    Opportunités
+                  </p>
+                  <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                    {activeFinds
+                      .sort((a, b) => savingsPct(b) - savingsPct(a))
+                      .map((f) => {
+                        const pid = findProductId(f.productName)
+                        const pct = savingsPct(f)
+                        const st = STATUS_CONFIG[f.status]
+                        return (
+                          <Link
+                            key={f.id}
+                            href={pid ? `/products/${pid}` : "#"}
+                            className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                          >
+                            <span className="text-sm truncate">
+                              {categoryEmoji(f.category)} {f.productName}
+                            </span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className={`text-xs font-semibold tabular-nums ${pct > 15 ? "text-red-600" : "text-amber-600"}`}>
+                                -{pct.toFixed(0)}%
+                              </span>
+                              <span className="text-[10px]">{st.emoji}</span>
+                            </div>
+                          </Link>
+                        )
+                      })}
+                  </div>
+                </PopoverContent>
+              </Popover>
+
               <KPICard
                 title="Produits surveillés"
                 value={kpis.productsWatched.toString()}
-                subtitle="dans market_prices"
+                subtitle="relevés par l'agent"
                 icon={Package}
                 color="purple"
               />
@@ -395,7 +539,7 @@ export default function SourcingPage() {
                     ? `-${Math.abs(kpis.avgSavingPct).toFixed(1)}%`
                     : "0%"
                 }
-                subtitle="vs ton prix"
+                subtitle="vs tes prix actuels"
                 icon={BarChart3}
                 color={kpis.avgSavingPct > 5 ? "red" : "amber"}
               />
@@ -612,8 +756,20 @@ export default function SourcingPage() {
                           <TableRow key={find.id}>
                             {/* Produit */}
                             <TableCell className="font-medium whitespace-nowrap">
-                              <span className="mr-1.5">{categoryEmoji(find.category)}</span>
-                              {find.productName}
+                              {(() => {
+                                const pid = findProductId(find.productName)
+                                return pid ? (
+                                  <Link href={`/products/${pid}`} className="hover:underline">
+                                    <span className="mr-1.5">{categoryEmoji(find.category)}</span>
+                                    {find.productName}
+                                  </Link>
+                                ) : (
+                                  <>
+                                    <span className="mr-1.5">{categoryEmoji(find.category)}</span>
+                                    {find.productName}
+                                  </>
+                                )
+                              })()}
                             </TableCell>
 
                             {/* Écart */}
@@ -638,9 +794,17 @@ export default function SourcingPage() {
                             {/* Source */}
                             <TableCell>
                               {find.source ? (
-                                <Badge variant="outline" className="text-xs">
-                                  {find.source}
-                                </Badge>
+                                <a
+                                  href={find.source.startsWith("http") ? find.source : `https://${find.source}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1"
+                                >
+                                  <Badge variant="outline" className="text-xs hover:bg-accent transition-colors">
+                                    {find.source}
+                                    <ExternalLink className="size-2.5 ml-0.5 opacity-50" />
+                                  </Badge>
+                                </a>
                               ) : (
                                 <span className="text-muted-foreground">--</span>
                               )}

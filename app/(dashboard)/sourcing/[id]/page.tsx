@@ -187,7 +187,7 @@ export default function SourcingReportPage() {
 
       // 5. Fetch recent price_history for comparison
       const historyResult = await pb.collection("price_history").getList<PriceHistory>(1, 500, {
-        sort: "-date",
+        sort: "-invoiceDate",
       })
       setPriceHistory(historyResult.items)
 
@@ -254,12 +254,14 @@ export default function SourcingReportPage() {
   function getLatestPrice(productName: string): number | null {
     const lower = productName.toLowerCase()
     const matching = priceHistory.filter((ph) => {
-      const prod = products.find((p) => p.id === ph.product)
-      return prod && prod.name.toLowerCase() === lower
+      // Match by productId→product name or by productDescription
+      const prod = products.find((p) => p.id === ph.productId)
+      const descMatch = (ph.productDescription || "").toLowerCase().includes(lower)
+      return (prod && prod.name.toLowerCase() === lower) || descMatch
     })
     if (matching.length === 0) return null
-    // Already sorted by -date, first is latest
-    return matching[0].price
+    // Already sorted by -invoiceDate, first is latest
+    return matching[0].unitPrice
   }
 
   /** Get the best (lowest) market price for a product this week. */
@@ -444,7 +446,7 @@ export default function SourcingReportPage() {
           </Link>
 
           <PageHeader
-            title={`RAPPORT VEILLE \u2014 Semaine du ${weekLabel}`}
+            title={`RAPPORT VEILLE — Semaine du ${weekLabel}`}
           />
 
           <Card>
@@ -457,10 +459,10 @@ export default function SourcingReportPage() {
                   <CardTitle className="text-sm">
                     Agent Sourcing{" "}
                     <span className="text-muted-foreground font-normal">
-                      {" \u00B7 "}
-                      {formatDate(activity.created)} {"\u00E0"} {formatTime(activity.created)}
-                      {" \u00B7 "}
-                      Dur\u00E9e : {parseDuration(activity.description || "")}
+                      {" · "}
+                      {formatDate(activity.created)} {"à"} {formatTime(activity.created)}
+                      {" · "}
+                      {"Durée : "}{parseDuration(activity.description || "")}
                     </span>
                   </CardTitle>
                 </div>
@@ -478,7 +480,7 @@ export default function SourcingReportPage() {
               {sourcesBreakdown.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    Sources interrog\u00E9es
+                    Sources interrogées
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {sourcesBreakdown.map((s) => (
@@ -548,7 +550,7 @@ export default function SourcingReportPage() {
                       </Badge>
                       {monthlySaving > 0 && (
                         <span className="text-sm text-muted-foreground">
-                          ~{formatCurrency(monthlySaving)}/mois d'\u00E9conomie
+                          ~{formatCurrency(monthlySaving)}/mois d'économie
                         </span>
                       )}
                     </div>
@@ -567,7 +569,7 @@ export default function SourcingReportPage() {
                           </span>
                         </TooltipTrigger>
                         <TooltipContent>
-                          Fiabilit\u00E9 de la source : {fiability.label}
+                          Fiabilité de la source : {fiability.label}
                         </TooltipContent>
                       </Tooltip>
                     </div>
@@ -598,15 +600,15 @@ export default function SourcingReportPage() {
         {/* SECTION 3 — COMPARATIF DÉTAILLÉ                                   */}
         {/* ================================================================= */}
         <div className="space-y-4">
-          <h2 className="text-lg font-semibold">Comparatif d\u00E9taill\u00E9</h2>
+          <h2 className="text-lg font-semibold">Comparatif détaillé</h2>
 
           {comparatifByCategory.sortedCategories.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
                 <FileText className="size-10 mb-3 opacity-30" />
-                <p className="font-medium">Aucune donn\u00E9e de comparaison</p>
+                <p className="font-medium">Aucune donnée de comparaison</p>
                 <p className="text-sm mt-1">
-                  Pas de prix march\u00E9 ou de r\u00E9f\u00E9rence pour cette semaine.
+                  Pas de prix marché ou de référence pour cette semaine.
                 </p>
               </CardContent>
             </Card>
@@ -633,8 +635,8 @@ export default function SourcingReportPage() {
                           <TableRow>
                             <TableHead>Produit</TableHead>
                             <TableHead className="text-right">Ton prix</TableHead>
-                            <TableHead className="text-right">March\u00E9</TableHead>
-                            <TableHead className="w-[180px]">\u00C9cart %</TableHead>
+                            <TableHead className="text-right">Marché</TableHead>
+                            <TableHead className="w-[180px]">Écart %</TableHead>
                             <TableHead>Source</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -728,7 +730,7 @@ export default function SourcingReportPage() {
                                           </span>
                                         </TooltipTrigger>
                                         <TooltipContent>
-                                          Fiabilit\u00E9 : {fiability.label}
+                                          Fiabilité : {fiability.label}
                                         </TooltipContent>
                                       </Tooltip>
                                     </div>
@@ -757,7 +759,7 @@ export default function SourcingReportPage() {
             <h2 className="text-lg font-semibold">Plan d'action</h2>
             {totalMonthlySaving > 0 && (
               <Badge variant="success" className="text-xs">
-                \u00C9conomie estim\u00E9e : {formatCurrency(totalMonthlySaving)}/mois
+                Économie estimée : {formatCurrency(totalMonthlySaving)}/mois
               </Badge>
             )}
           </div>
@@ -766,9 +768,9 @@ export default function SourcingReportPage() {
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
                 <CheckSquare className="size-10 mb-3 opacity-30" />
-                <p className="font-medium">Aucune action recommand\u00E9e</p>
+                <p className="font-medium">Aucune action recommandée</p>
                 <p className="text-sm mt-1">
-                  Les \u00E9carts de prix cette semaine sont trop faibles pour justifier une action.
+                  Les écarts de prix cette semaine sont trop faibles pour justifier une action.
                 </p>
               </CardContent>
             </Card>
@@ -779,7 +781,7 @@ export default function SourcingReportPage() {
                 {actionPlan.tier1.length > 0 && (
                   <ActionTier
                     number={1}
-                    label="Ren\u00E9gocier ou resourcer"
+                    label="Renégocier ou resourcer"
                     badge="destructive"
                     icon={<ShieldAlert className="size-4" />}
                     finds={actionPlan.tier1}
@@ -791,7 +793,7 @@ export default function SourcingReportPage() {
                 {actionPlan.tier2.length > 0 && (
                   <ActionTier
                     number={actionPlan.tier1.length > 0 ? 2 : 1}
-                    label="Bases \u00E0 fort volume"
+                    label="Bases à fort volume"
                     badge="warning"
                     icon={<ShieldCheck className="size-4" />}
                     finds={actionPlan.tier2}
@@ -827,7 +829,7 @@ export default function SourcingReportPage() {
                   Valider ce plan
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Bient\u00F4t disponible</TooltipContent>
+              <TooltipContent>Bientôt disponible</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -836,7 +838,7 @@ export default function SourcingReportPage() {
                   Telegram
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Bient\u00F4t disponible</TooltipContent>
+              <TooltipContent>Bientôt disponible</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -845,7 +847,7 @@ export default function SourcingReportPage() {
                   Export PDF
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>Bient\u00F4t disponible</TooltipContent>
+              <TooltipContent>Bientôt disponible</TooltipContent>
             </Tooltip>
           </div>
         </div>
@@ -934,7 +936,7 @@ function ActionTier({
                       </span>
                     </TooltipTrigger>
                     <TooltipContent>
-                      {f.source} \u2014 Fiabilit\u00E9 : {fiability.label}
+                      {f.source} — Fiabilité : {fiability.label}
                     </TooltipContent>
                   </Tooltip>
                 )}

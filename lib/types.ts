@@ -103,13 +103,14 @@ export interface PriceHistory {
   collectionName: string
   created: string
   updated: string
-  product: string
-  supplier: string
+  productId: string
+  productDescription: string
   supplierName: string
-  invoiceLine: string
-  price: number
+  invoiceId: string
+  unitPrice: number
   quantity: number
-  date: string
+  unit: string
+  invoiceDate: string
 }
 
 export interface SupplierProduct {

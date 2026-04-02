@@ -108,12 +108,23 @@ export default function ProductDetailPage() {
         const prod = await pb.collection("products").getOne<Product>(productId)
         setProduct(prod)
 
-        // Fetch price history for this product (by product relation or name match)
-        const histResult = await pb.collection("price_history").getList<PriceHistory>(1, 500, {
-          filter: `product="${productId}"`,
-          sort: "-date",
-        })
-        setHistory(histResult.items)
+        // Fetch price history for this product (by productId or name match)
+        try {
+          const histResult = await pb.collection("price_history").getList<PriceHistory>(1, 500, {
+            filter: `productId="${productId}" || productDescription~"${prod.name}"`,
+            sort: "-invoiceDate",
+          })
+          setHistory(histResult.items)
+        } catch {
+          // field mismatch, try name-only fallback
+          try {
+            const histResult = await pb.collection("price_history").getList<PriceHistory>(1, 500, {
+              filter: `productDescription~"${prod.name}"`,
+              sort: "-invoiceDate",
+            })
+            setHistory(histResult.items)
+          } catch { /* silent */ }
+        }
 
         // Fetch supplier_products for this product
         try {
@@ -126,11 +137,10 @@ export default function ProductDetailPage() {
           // collection may not exist, ignore
         }
 
-        // Fetch related anomalies
+        // Fetch related anomalies (by description name match since no product relation)
         try {
           const anomResult = await pb.collection("anomalies").getList<Anomaly>(1, 20, {
-            filter: `product="${productId}" || description~"${prod.name}"`,
-            sort: "-created",
+            filter: `description~"${prod.name}" || supplierName~"${prod.name}"`,
           })
           setAnomalies(anomResult.items)
         } catch {
@@ -152,7 +162,7 @@ export default function ProductDetailPage() {
         try {
           const sfResult = await pb.collection("sourcing_finds").getList<SourcingFind>(1, 50, {
             filter: `productName~"${prod.name}" && (status="new" || status="interesting")`,
-            sort: "-created",
+            sort: "-weekOf",
           })
           setSourcingFinds(sfResult.items)
         } catch {
@@ -185,11 +195,11 @@ export default function ProductDetailPage() {
     for (const h of history) {
       const name = h.supplierName || "Inconnu"
       const entry = map.get(name) || { prices: [], count: 0, lastDate: "", lastPrice: 0 }
-      entry.prices.push(h.price)
+      entry.prices.push(h.unitPrice)
       entry.count++
-      if (!entry.lastDate || h.date > entry.lastDate) {
-        entry.lastDate = h.date
-        entry.lastPrice = h.price
+      if (!entry.lastDate || h.invoiceDate > entry.lastDate) {
+        entry.lastDate = h.invoiceDate
+        entry.lastPrice = h.unitPrice
       }
       map.set(name, entry)
     }
@@ -240,12 +250,12 @@ export default function ProductDetailPage() {
     // Group history by month+supplier, take average price per month
     const grouped = new Map<string, Map<string, number[]>>()
     for (const h of history) {
-      const mk = monthKey(h.date)
+      const mk = monthKey(h.invoiceDate)
       const supplier = h.supplierName || "Inconnu"
       if (!grouped.has(mk)) grouped.set(mk, new Map())
       const supplierMap = grouped.get(mk)!
       if (!supplierMap.has(supplier)) supplierMap.set(supplier, [])
-      supplierMap.get(supplier)!.push(h.price)
+      supplierMap.get(supplier)!.push(h.unitPrice)
     }
 
     return months.map(({ key, label }) => {
@@ -276,7 +286,7 @@ export default function ProductDetailPage() {
 
     const grouped = new Map<string, Map<string, number>>()
     for (const h of history) {
-      const mk = monthKey(h.date)
+      const mk = monthKey(h.invoiceDate)
       const supplier = h.supplierName || "Inconnu"
       if (!grouped.has(mk)) grouped.set(mk, new Map())
       const supplierMap = grouped.get(mk)!
@@ -360,10 +370,10 @@ export default function ProductDetailPage() {
     // Group internal prices by week (average)
     const internalByWeek = new Map<number, number[]>()
     for (const h of history) {
-      const idx = findWeekIdx(h.date)
+      const idx = findWeekIdx(h.invoiceDate)
       if (idx >= 0) {
         if (!internalByWeek.has(idx)) internalByWeek.set(idx, [])
-        internalByWeek.get(idx)!.push(h.price)
+        internalByWeek.get(idx)!.push(h.unitPrice)
       }
     }
 
@@ -781,7 +791,7 @@ export default function ProductDetailPage() {
                 {recentHistory.map((h) => (
                   <TableRow key={h.id}>
                     <TableCell className="text-muted-foreground">
-                      {h.date ? formatDate(h.date) : "—"}
+                      {h.invoiceDate ? formatDate(h.invoiceDate) : "—"}
                     </TableCell>
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
@@ -796,10 +806,10 @@ export default function ProductDetailPage() {
                       {h.quantity} {product.unit || ""}
                     </TableCell>
                     <TableCell className="text-right tabular-nums font-medium">
-                      {formatCurrency(h.price)}
+                      {formatCurrency(h.unitPrice)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums font-semibold">
-                      {formatCurrency(h.price * h.quantity)}
+                      {formatCurrency(h.unitPrice * h.quantity)}
                     </TableCell>
                   </TableRow>
                 ))}
