@@ -429,7 +429,12 @@ export default function SourcingPage() {
             fetchMarketData()
             fetchActivities()
 
-            toast.success(`Veille terminée — ${newFinds.totalItems} nouvelle${newFinds.totalItems > 1 ? "s" : ""} opportunité${newFinds.totalItems > 1 ? "s" : ""}`)
+            toast.success("Veille terminée", {
+              description: newFinds.totalItems > 0
+                ? `${newFinds.totalItems} nouvelle${newFinds.totalItems > 1 ? "s" : ""} opportunité${newFinds.totalItems > 1 ? "s" : ""} trouvée${newFinds.totalItems > 1 ? "s" : ""}. Les données ont été mises à jour.`
+                : "Aucune nouvelle opportunité cette fois. Les prix existants ont été vérifiés.",
+              duration: 10000,
+            })
           }
         } catch { /* silent poll error */ }
 
