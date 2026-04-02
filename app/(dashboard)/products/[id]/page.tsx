@@ -195,11 +195,11 @@ export default function ProductDetailPage() {
     for (const h of history) {
       const name = h.supplierName || "Inconnu"
       const entry = map.get(name) || { prices: [], count: 0, lastDate: "", lastPrice: 0 }
-      entry.prices.push(h.unitPrice)
+      entry.prices.push(h.normalizedUnitPrice || h.unitPrice)
       entry.count++
       if (!entry.lastDate || h.invoiceDate > entry.lastDate) {
         entry.lastDate = h.invoiceDate
-        entry.lastPrice = h.unitPrice
+        entry.lastPrice = h.normalizedUnitPrice || h.unitPrice
       }
       map.set(name, entry)
     }
@@ -255,7 +255,7 @@ export default function ProductDetailPage() {
       if (!grouped.has(mk)) grouped.set(mk, new Map())
       const supplierMap = grouped.get(mk)!
       if (!supplierMap.has(supplier)) supplierMap.set(supplier, [])
-      supplierMap.get(supplier)!.push(h.unitPrice)
+      supplierMap.get(supplier)!.push(h.normalizedUnitPrice || h.unitPrice)
     }
 
     return months.map(({ key, label }) => {
@@ -373,7 +373,7 @@ export default function ProductDetailPage() {
       const idx = findWeekIdx(h.invoiceDate)
       if (idx >= 0) {
         if (!internalByWeek.has(idx)) internalByWeek.set(idx, [])
-        internalByWeek.get(idx)!.push(h.unitPrice)
+        internalByWeek.get(idx)!.push(h.normalizedUnitPrice || h.unitPrice)
       }
     }
 

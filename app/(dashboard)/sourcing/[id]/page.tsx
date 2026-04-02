@@ -261,7 +261,7 @@ export default function SourcingReportPage() {
     })
     if (matching.length === 0) return null
     // Already sorted by -invoiceDate, first is latest
-    return matching[0].unitPrice
+    return matching[0].normalizedUnitPrice || matching[0].unitPrice
   }
 
   /** Get the best (lowest) market price for a product this week. */

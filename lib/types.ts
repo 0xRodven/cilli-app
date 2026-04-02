@@ -111,6 +111,8 @@ export interface PriceHistory {
   quantity: number
   unit: string
   invoiceDate: string
+  normalizedUnitPrice: number
+  normalizedUnit: string
 }
 
 export interface SupplierProduct {
