@@ -173,6 +173,7 @@ export interface Import {
   invoice: string
   errorMessage: string
   rawExtractedData: Record<string, unknown>
+  file: string
 }
 
 export type SeverityLevel = "high" | "medium" | "low"

@@ -5,17 +5,25 @@ import { PageHeader } from "@/components/layout/page-header"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { getPocketBase } from "@/lib/pocketbase"
 import { toast } from "sonner"
-import { Upload, FileText, CheckCircle, XCircle, Loader2 } from "lucide-react"
+import { Upload, FileText, CheckCircle, XCircle, Loader2, Eye } from "lucide-react"
 import { cn, formatDate } from "@/lib/utils"
 import { useEffect } from "react"
 import type { Import } from "@/lib/types"
+
+function getFileUrl(imp: Import): string | null {
+  if (!imp.file) return null
+  const pb = getPocketBase()
+  return `${pb.baseURL}/api/files/imports/${imp.id}/${imp.file}`
+}
 
 export default function ImportPage() {
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [imports, setImports] = useState<Import[]>([])
+  const [previewImport, setPreviewImport] = useState<Import | null>(null)
 
   useEffect(() => {
     async function fetchImports() {
@@ -140,6 +148,17 @@ export default function ImportPage() {
                       <p className="text-xs text-destructive mt-0.5">{imp.errorMessage}</p>
                     )}
                   </div>
+                  {imp.file && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0 h-7 text-xs gap-1"
+                      onClick={() => setPreviewImport(imp)}
+                    >
+                      <Eye className="size-3" />
+                      Aperçu
+                    </Button>
+                  )}
                   <Badge variant={config.variant} className="gap-1 shrink-0">
                     <Icon className={cn("size-3", config.spin && "animate-spin")} />
                     {config.label}
@@ -150,6 +169,36 @@ export default function ImportPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* PDF Preview Dialog */}
+      <Dialog open={!!previewImport} onOpenChange={(open) => !open && setPreviewImport(null)}>
+        <DialogContent className="max-w-4xl h-[85vh] flex flex-col p-0">
+          <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
+            <DialogTitle className="text-base truncate">{previewImport?.filename}</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 min-h-0 px-6 pb-6">
+            {previewImport && getFileUrl(previewImport) ? (
+              previewImport.mimeType?.startsWith("image/") ? (
+                <img
+                  src={getFileUrl(previewImport)!}
+                  alt={previewImport.filename}
+                  className="w-full h-full object-contain rounded-md"
+                />
+              ) : (
+                <iframe
+                  src={getFileUrl(previewImport)!}
+                  className="w-full h-full rounded-md border"
+                  title={previewImport.filename}
+                />
+              )
+            ) : (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                Aperçu non disponible
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
