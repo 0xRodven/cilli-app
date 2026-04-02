@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useMemo } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import Link from "next/link"
 import { PageHeader } from "@/components/layout/page-header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -357,23 +357,100 @@ export default function SourcingPage() {
   // Trigger sourcing
   // -------------------------------------------------------------------------
 
-  const [triggeringSourcing, setTriggeringSourcing] = useState(false)
+  const [scanState, setScanState] = useState<"idle" | "triggering" | "polling" | "done" | "timeout">("idle")
+  const [scanProgress, setScanProgress] = useState(0)
+  const [scanStartTime, setScanStartTime] = useState<string | null>(null)
+  const [scanResult, setScanResult] = useState<{ title: string; finds: number } | null>(null)
+  const scanPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (scanPollRef.current) clearInterval(scanPollRef.current)
+    }
+  }, [])
 
   async function triggerSourcing() {
-    setTriggeringSourcing(true)
+    setScanState("triggering")
+    setScanProgress(0)
+    setScanResult(null)
+
     try {
       const res = await fetch("/api/trigger-sourcing", { method: "POST" })
       const data = await res.json()
-      if (data.ok) {
-        toast.success("Veille lancée ! L'agent sourcing va analyser les prix.")
-      } else {
+      if (!data.ok) {
         toast.error("Erreur : " + (data.error || "échec du déclenchement"))
+        setScanState("idle")
+        return
       }
+
+      // Start polling
+      const triggerTime = new Date().toISOString()
+      setScanStartTime(triggerTime)
+      setScanState("polling")
+      setScanProgress(10)
+
+      let elapsed = 0
+      const POLL_INTERVAL = 8000 // 8s
+      const TIMEOUT = 5 * 60 * 1000 // 5 min
+
+      scanPollRef.current = setInterval(async () => {
+        elapsed += POLL_INTERVAL
+
+        // Animate progress bar (slow fill to ~85% over 3 min)
+        setScanProgress(Math.min(85, 10 + (elapsed / TIMEOUT) * 75))
+
+        // Check for new activity
+        try {
+          const pb = getPocketBase()
+          const result = await pb.collection("activities").getList(1, 1, {
+            filter: `type = "sourcing_search" && created > "${triggerTime}"`,
+            sort: "-created",
+          })
+
+          if (result.items.length > 0) {
+            // Scan finished!
+            if (scanPollRef.current) clearInterval(scanPollRef.current)
+            setScanProgress(100)
+
+            // Count new finds
+            const newFinds = await pb.collection("sourcing_finds").getList(1, 1, {
+              filter: `created > "${triggerTime}"`,
+            })
+
+            setScanResult({
+              title: result.items[0].title || "Veille terminée",
+              finds: newFinds.totalItems,
+            })
+            setScanState("done")
+
+            // Refresh data
+            fetchFinds()
+            fetchMarketData()
+            fetchActivities()
+
+            toast.success(`Veille terminée — ${newFinds.totalItems} nouvelle${newFinds.totalItems > 1 ? "s" : ""} opportunité${newFinds.totalItems > 1 ? "s" : ""}`)
+          }
+        } catch { /* silent poll error */ }
+
+        // Timeout
+        if (elapsed >= TIMEOUT) {
+          if (scanPollRef.current) clearInterval(scanPollRef.current)
+          setScanState("timeout")
+          setScanProgress(100)
+        }
+      }, POLL_INTERVAL)
     } catch {
       toast.error("Impossible de contacter le serveur")
-    } finally {
-      setTriggeringSourcing(false)
+      setScanState("idle")
     }
+  }
+
+  function dismissScan() {
+    if (scanPollRef.current) clearInterval(scanPollRef.current)
+    setScanState("idle")
+    setScanProgress(0)
+    setScanResult(null)
   }
 
   // -------------------------------------------------------------------------
@@ -392,15 +469,84 @@ export default function SourcingPage() {
           sticky
         >
           <Button
-            variant="outline"
+            variant={scanState === "idle" ? "outline" : "secondary"}
             size="sm"
-            onClick={triggerSourcing}
-            disabled={triggeringSourcing}
+            onClick={scanState === "idle" ? triggerSourcing : undefined}
+            disabled={scanState !== "idle"}
+            className={scanState === "polling" ? "animate-pulse" : ""}
           >
-            <Radar className="size-4" />
-            {triggeringSourcing ? "Lancement..." : "Lancer une veille"}
+            <Radar className={`size-4 ${scanState === "polling" ? "animate-spin" : ""}`} />
+            {scanState === "idle" && "Lancer une veille"}
+            {scanState === "triggering" && "Lancement..."}
+            {scanState === "polling" && "Veille en cours..."}
+            {scanState === "done" && "Terminée"}
+            {scanState === "timeout" && "Timeout"}
           </Button>
         </PageHeader>
+
+        {/* Scan progress banner */}
+        {scanState !== "idle" && (
+          <Card className="overflow-hidden border-blue-200 dark:border-blue-800">
+            <CardContent className="p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {scanState === "polling" && (
+                    <>
+                      <div className="size-2 rounded-full bg-blue-500 animate-pulse" />
+                      <span className="text-sm font-medium">L'agent analyse les prix marché...</span>
+                    </>
+                  )}
+                  {scanState === "done" && scanResult && (
+                    <>
+                      <div className="size-2 rounded-full bg-green-500" />
+                      <span className="text-sm font-medium text-green-700 dark:text-green-400">
+                        {scanResult.title}
+                      </span>
+                    </>
+                  )}
+                  {scanState === "timeout" && (
+                    <>
+                      <div className="size-2 rounded-full bg-amber-500" />
+                      <span className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                        Le scan prend plus longtemps que prévu. Les résultats apparaîtront automatiquement.
+                      </span>
+                    </>
+                  )}
+                </div>
+                {(scanState === "done" || scanState === "timeout") && (
+                  <Button variant="ghost" size="sm" onClick={dismissScan}>
+                    <X className="size-3.5" />
+                  </Button>
+                )}
+              </div>
+
+              {/* Progress bar */}
+              <div className="h-1.5 w-full bg-black/5 dark:bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-1000 ease-out ${
+                    scanState === "done"
+                      ? "bg-green-500"
+                      : scanState === "timeout"
+                        ? "bg-amber-500"
+                        : "bg-blue-500"
+                  }`}
+                  style={{ width: `${scanProgress}%` }}
+                />
+              </div>
+
+              {scanState === "polling" && (
+                <p className="text-xs text-muted-foreground">
+                  Interrogation des sources (SearXNG, RNM, MIN Lomme, Promocash, Transgourmet)...
+                </p>
+              )}
+              {scanState === "done" && scanResult && scanResult.finds > 0 && (
+                <p className="text-xs text-green-600 dark:text-green-400">
+                  {scanResult.finds} nouvelle{scanResult.finds > 1 ? "s" : ""} opportunité{scanResult.finds > 1 ? "s" : ""} trouvée{scanResult.finds > 1 ? "s" : ""}. Les KPIs ont été mis à jour.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* ================================================================= */}
         {/* SECTION 1 — 4 KPI Cards                                           */}
