@@ -341,9 +341,10 @@ export default function ImportPage() {
       {/* Drop zone */}
       <Card>
         <CardContent className="pt-6">
-          <div
+          <label
+            htmlFor="file-input"
             className={cn(
-              "border-2 border-dashed rounded-xl p-10 text-center transition-all",
+              "block border-2 border-dashed rounded-xl p-10 text-center transition-all",
               dragging
                 ? "border-primary bg-primary/5 scale-[1.01]"
                 : "border-muted-foreground/25 hover:border-muted-foreground/50",
@@ -355,7 +356,6 @@ export default function ImportPage() {
             }}
             onDragLeave={() => setDragging(false)}
             onDrop={handleDrop}
-            onClick={() => document.getElementById("file-input")?.click()}
           >
             <input
               id="file-input"
@@ -363,7 +363,7 @@ export default function ImportPage() {
               multiple
               accept=".pdf,.jpg,.jpeg,.png,.heic"
               className="hidden"
-              onChange={(e) => handleFiles(e.target.files)}
+              onChange={(e) => { handleFiles(e.target.files); e.target.value = "" }}
             />
             {uploading ? (
               <Loader2 className="size-10 mx-auto mb-3 text-primary animate-spin" />
@@ -377,11 +377,11 @@ export default function ImportPage() {
               PDF, JPG, PNG, HEIC — plusieurs fichiers acceptés
             </p>
             {!uploading && (
-              <Button className="mt-4" variant="outline" type="button">
+              <span className="inline-flex items-center justify-center mt-4 px-4 py-2 rounded-md border border-input bg-background text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors">
                 Parcourir...
-              </Button>
+              </span>
             )}
-          </div>
+          </label>
         </CardContent>
       </Card>
 
