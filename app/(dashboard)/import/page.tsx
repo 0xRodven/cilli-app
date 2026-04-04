@@ -171,6 +171,7 @@ export default function ImportPage() {
   const [uploading, setUploading] = useState(false)
   const [imports, setImports] = useState<(Import & { linkedInvoice?: Invoice | null })[]>([])
   const [previewImport, setPreviewImport] = useState<Import | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const invoiceCacheRef = useRef<Record<string, Invoice>>({})
 
@@ -342,21 +343,20 @@ export default function ImportPage() {
       <Card>
         <CardContent className="pt-6">
           <input
-            id="file-input"
+            ref={fileInputRef}
             type="file"
             multiple
             accept=".pdf,.jpg,.jpeg,.png,.heic"
-            className="hidden"
+            className="sr-only"
+            tabIndex={-1}
             onChange={(e) => { handleFiles(e.target.files); e.target.value = "" }}
           />
-          <label
-            htmlFor="file-input"
+          <div
             className={cn(
-              "block border-2 border-dashed rounded-xl p-10 text-center transition-all",
+              "border-2 border-dashed rounded-xl p-10 text-center transition-all",
               dragging
                 ? "border-primary bg-primary/5 scale-[1.01]"
                 : "border-muted-foreground/25 hover:border-muted-foreground/50",
-              "cursor-pointer"
             )}
             onDragOver={(e) => {
               e.preventDefault()
@@ -377,11 +377,19 @@ export default function ImportPage() {
               PDF, JPG, PNG, HEIC — plusieurs fichiers acceptés
             </p>
             {!uploading && (
-              <span className="inline-flex items-center justify-center mt-4 px-4 py-2 rounded-md border border-input bg-background text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors">
+              <Button
+                variant="outline"
+                type="button"
+                className="mt-4"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  fileInputRef.current?.click()
+                }}
+              >
                 Parcourir...
-              </span>
+              </Button>
             )}
-          </label>
+          </div>
         </CardContent>
       </Card>
 
