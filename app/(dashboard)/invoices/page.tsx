@@ -69,9 +69,7 @@ export default function InvoicesPage() {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState(searchParams.get("search") || "")
   const [status, setStatus] = useState<string>(searchParams.get("status") || "")
-  const [period, setPeriod] = useState<Period>(
-    GLOBAL_PERIODS.includes(globalPreset as Period) ? (globalPreset as Period) : "3_months"
-  )
+  const [period, setPeriod] = useState<Period>("all")
   const [amountRange, setAmountRange] = useState<AmountRange>("all")
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [previewTitle, setPreviewTitle] = useState("")
