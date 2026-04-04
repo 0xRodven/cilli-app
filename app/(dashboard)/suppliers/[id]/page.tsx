@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
-import { ArrowLeft, MapPin, Phone, Mail, Building2, FileText, Euro, ShoppingCart, Globe, Hash, ExternalLink } from "lucide-react"
+import { ArrowLeft, MapPin, Phone, Mail, Building2, FileText, Euro, ShoppingCart, Globe, ExternalLink, Eye } from "lucide-react"
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -71,7 +71,7 @@ export default function SupplierDetailPage() {
       try {
         const pb = getPocketBase()
         const result = await pb.collection("invoices").getList<Invoice>(1, 500, {
-          filter: `supplierName="${supplier!.name}"`,
+          filter: `supplierName~"${supplier!.name}"`,
           sort: "-invoiceDate",
         })
         if (!cancelled) setInvoices(result.items)
@@ -177,14 +177,12 @@ export default function SupplierDetailPage() {
               </div>
 
               {/* SIRET */}
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Hash className="size-4 shrink-0" />
-                {supplier.siret ? (
-                  <span className="font-mono text-xs">{supplier.siret}</span>
-                ) : (
-                  <span className="text-muted-foreground/50">SIRET non renseigné</span>
-                )}
-              </div>
+              {supplier.siret && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Building2 className="size-4 shrink-0" />
+                  <span className="text-xs">SIRET : <span className="font-mono">{supplier.siret}</span></span>
+                </div>
+              )}
             </div>
 
             {/* Website if present */}
@@ -272,6 +270,7 @@ export default function SupplierDetailPage() {
                 <TableHead className="text-right">Total TTC</TableHead>
                 <TableHead>Statut</TableHead>
                 <TableHead>Source</TableHead>
+                <TableHead className="w-8"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -285,7 +284,7 @@ export default function SupplierDetailPage() {
                 ))
               ) : invoices.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-12 text-center">
+                  <TableCell colSpan={7} className="py-12 text-center">
                     <FileText className="size-8 mx-auto mb-2 opacity-30" />
                     <p className="text-sm font-medium">Aucune facture</p>
                   </TableCell>
@@ -295,13 +294,16 @@ export default function SupplierDetailPage() {
                   const statusCfg = invoiceStatusConfig[invoice.status] || { label: invoice.status, variant: "secondary" as const }
                   const sourceLabel = invoice.sourceChannel === "ocr_upload" ? "OCR" : invoice.sourceChannel === "odoo_import" ? "Odoo" : invoice.sourceChannel || "—"
                   return (
-                    <TableRow key={invoice.id}>
-                      <TableCell className="font-mono text-xs">{invoice.invoiceNumber || "—"}</TableCell>
+                    <TableRow key={invoice.id} className="cursor-pointer hover:bg-muted/50" onClick={() => window.open(`/invoices?search=${encodeURIComponent(invoice.invoiceNumber || "")}`, "_self")}>
+                      <TableCell className="font-mono text-xs text-primary">{invoice.invoiceNumber || "—"}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{invoice.invoiceDate ? formatDate(invoice.invoiceDate) : "—"}</TableCell>
                       <TableCell className="text-right tabular-nums font-medium">{formatCurrency(invoice.totalHT || 0)}</TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">{formatCurrency(invoice.totalTTC || 0)}</TableCell>
                       <TableCell><Badge variant={statusCfg.variant}>{statusCfg.label}</Badge></TableCell>
                       <TableCell><span className="text-xs text-muted-foreground">{sourceLabel}</span></TableCell>
+                      <TableCell>
+                        <Eye className="size-3.5 text-muted-foreground" />
+                      </TableCell>
                     </TableRow>
                   )
                 })
