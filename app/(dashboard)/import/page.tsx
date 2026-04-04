@@ -4,13 +4,12 @@ import { useState, useCallback, useEffect, useRef } from "react"
 import { PageHeader } from "@/components/layout/page-header"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { getPocketBase } from "@/lib/pocketbase"
 import { toast } from "sonner"
-import { Upload, FileText, CheckCircle, XCircle, Loader2, Eye, RefreshCw } from "lucide-react"
-import { cn, formatDate } from "@/lib/utils"
-import type { Import } from "@/lib/types"
+import { Upload, FileText, CheckCircle, XCircle, Loader2, Eye, RefreshCw, AlertTriangle } from "lucide-react"
+import { cn, formatDate, formatCurrency } from "@/lib/utils"
+import type { Import, Invoice } from "@/lib/types"
 
 function getFileUrl(imp: Import): string | null {
   if (!imp.file) return null
@@ -18,34 +17,199 @@ function getFileUrl(imp: Import): string | null {
   return `${pb.baseURL}/api/files/imports/${imp.id}/${imp.file}`
 }
 
+const progressSteps = [
+  { min: 0, label: "En file d'attente" },
+  { min: 10, label: "Démarrage..." },
+  { min: 30, label: "Lecture du document..." },
+  { min: 50, label: "Extraction des données..." },
+  { min: 70, label: "Vérification doublons & création..." },
+  { min: 90, label: "Finalisation..." },
+  { min: 100, label: "Terminé" },
+]
+
+function getProgressLabel(progress: number): string {
+  for (let i = progressSteps.length - 1; i >= 0; i--) {
+    if (progress >= progressSteps[i].min) return progressSteps[i].label
+  }
+  return "En attente..."
+}
+
+function ImportCard({
+  imp,
+  onPreview,
+}: {
+  imp: Import & { linkedInvoice?: Invoice | null }
+  onPreview: (imp: Import) => void
+}) {
+  const isProcessing = imp.status === "uploading" || imp.status === "processing"
+  const isCompleted = imp.status === "completed"
+  const isError = imp.status === "error"
+  const progress = imp.progress || 0
+  const isDuplicate = isError && imp.errorMessage?.toLowerCase().includes("doublon")
+
+  return (
+    <div
+      className={cn(
+        "rounded-lg border p-4 transition-all",
+        isProcessing && "border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20",
+        isCompleted && "border-green-200 bg-green-50/30 dark:border-green-800 dark:bg-green-950/20",
+        isError && !isDuplicate && "border-red-200 bg-red-50/30 dark:border-red-800 dark:bg-red-950/20",
+        isDuplicate && "border-amber-200 bg-amber-50/30 dark:border-amber-800 dark:bg-amber-950/20"
+      )}
+    >
+      {/* Header row */}
+      <div className="flex items-start gap-3">
+        <div
+          className={cn(
+            "mt-0.5 rounded-md p-2",
+            isProcessing && "bg-blue-100 text-blue-600 dark:bg-blue-900/50 dark:text-blue-400",
+            isCompleted && "bg-green-100 text-green-600 dark:bg-green-900/50 dark:text-green-400",
+            isError && !isDuplicate && "bg-red-100 text-red-600 dark:bg-red-900/50 dark:text-red-400",
+            isDuplicate && "bg-amber-100 text-amber-600 dark:bg-amber-900/50 dark:text-amber-400"
+          )}
+        >
+          {isProcessing && <Loader2 className="size-4 animate-spin" />}
+          {isCompleted && <CheckCircle className="size-4" />}
+          {isError && !isDuplicate && <XCircle className="size-4" />}
+          {isDuplicate && <AlertTriangle className="size-4" />}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium truncate">{imp.filename}</p>
+            {imp.file && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6 shrink-0"
+                title="Aperçu PDF"
+                onClick={() => onPreview(imp)}
+              >
+                <Eye className="size-3" />
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">{formatDate(imp.created)}</p>
+        </div>
+
+        {/* Status badge */}
+        <div
+          className={cn(
+            "shrink-0 rounded-full px-2.5 py-0.5 text-xs font-medium",
+            isProcessing && "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300",
+            isCompleted && "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300",
+            isError && !isDuplicate && "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
+            isDuplicate && "bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300"
+          )}
+        >
+          {isProcessing && "Traitement..."}
+          {isCompleted && "Importée"}
+          {isError && !isDuplicate && "Erreur"}
+          {isDuplicate && "Doublon"}
+        </div>
+      </div>
+
+      {/* Progress bar — visible during processing */}
+      {isProcessing && (
+        <div className="mt-3 space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-blue-600 dark:text-blue-400 font-medium">
+              {getProgressLabel(progress)}
+            </span>
+            <span className="text-muted-foreground tabular-nums">{progress}%</span>
+          </div>
+          <div className="h-2 rounded-full bg-blue-100 dark:bg-blue-900/30 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-blue-500 transition-all duration-700 ease-out"
+              style={{ width: `${Math.max(progress, 5)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Completed — show extracted invoice info */}
+      {isCompleted && imp.linkedInvoice && (
+        <div className="mt-3 rounded-md bg-white/60 dark:bg-white/5 border border-green-100 dark:border-green-900/30 p-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <div>
+              <p className="text-muted-foreground">Fournisseur</p>
+              <p className="font-medium truncate">{imp.linkedInvoice.supplierName}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">N° facture</p>
+              <p className="font-medium font-mono">{imp.linkedInvoice.invoiceNumber || "—"}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Date</p>
+              <p className="font-medium">{imp.linkedInvoice.invoiceDate ? formatDate(imp.linkedInvoice.invoiceDate) : "—"}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Montant TTC</p>
+              <p className="font-medium">{formatCurrency(imp.linkedInvoice.totalTTC || 0)}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error message */}
+      {isError && imp.errorMessage && (
+        <div className={cn(
+          "mt-3 rounded-md p-2.5 text-xs",
+          isDuplicate
+            ? "bg-amber-100/50 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300"
+            : "bg-red-100/50 text-red-700 dark:bg-red-900/20 dark:text-red-300"
+        )}>
+          {imp.errorMessage}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ImportPage() {
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [imports, setImports] = useState<Import[]>([])
+  const [imports, setImports] = useState<(Import & { linkedInvoice?: Invoice | null })[]>([])
   const [previewImport, setPreviewImport] = useState<Import | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const fetchImports = useCallback(async () => {
     try {
       const pb = getPocketBase()
-      const result = await pb.collection("imports").getList<Import>(1, 20, { sort: "-created" })
-      setImports(result.items)
-      return result.items
+      const result = await pb.collection("imports").getList<Import>(1, 30, { sort: "-created" })
+
+      // Fetch linked invoices for completed imports
+      const enriched = await Promise.all(
+        result.items.map(async (imp) => {
+          if (imp.status === "completed" && imp.invoice) {
+            try {
+              const invoice = await pb.collection("invoices").getOne<Invoice>(imp.invoice)
+              return { ...imp, linkedInvoice: invoice }
+            } catch {
+              return { ...imp, linkedInvoice: null }
+            }
+          }
+          return { ...imp, linkedInvoice: null }
+        })
+      )
+      setImports(enriched)
+      return enriched
     } catch {
       return []
     }
   }, [])
 
-  // Initial fetch
   useEffect(() => {
     fetchImports()
   }, [fetchImports])
 
-  // Poll while there are pending imports
+  // Poll every 3s while there are pending imports
   useEffect(() => {
-    const hasPending = imports.some(i => i.status === "uploading" || i.status === "processing")
+    const hasPending = imports.some(
+      (i) => i.status === "uploading" || i.status === "processing"
+    )
     if (hasPending && !pollRef.current) {
-      pollRef.current = setInterval(fetchImports, 5000)
+      pollRef.current = setInterval(fetchImports, 3000)
     } else if (!hasPending && pollRef.current) {
       clearInterval(pollRef.current)
       pollRef.current = null
@@ -58,72 +222,88 @@ export default function ImportPage() {
     }
   }, [imports, fetchImports])
 
-  const handleFiles = useCallback(async (files: FileList | null) => {
-    if (!files || files.length === 0) return
-    setUploading(true)
-    try {
-      const pb = getPocketBase()
-      const newImportIds: string[] = []
-      for (const file of Array.from(files)) {
-        const formData = new FormData()
-        formData.append("filename", file.name)
-        formData.append("fileSize", file.size.toString())
-        formData.append("mimeType", file.type)
-        formData.append("file", file)
-        formData.append("status", "uploading")
-        formData.append("progress", "0")
-        const record = await pb.collection("imports").create(formData)
-        newImportIds.push(record.id)
+  const handleFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return
+      setUploading(true)
+      try {
+        const pb = getPocketBase()
+        let count = 0
+        for (const file of Array.from(files)) {
+          const formData = new FormData()
+          formData.append("filename", file.name)
+          formData.append("fileSize", file.size.toString())
+          formData.append("mimeType", file.type)
+          formData.append("file", file)
+          formData.append("status", "uploading")
+          formData.append("progress", "0")
+          await pb.collection("imports").create(formData)
+          count++
+        }
+        toast.success(
+          `${count} fichier${count > 1 ? "s" : ""} uploadé${count > 1 ? "s" : ""} — traitement lancé`
+        )
+        await fetchImports()
+
+        // Trigger VPS processing
+        fetch("/api/trigger-import", { method: "POST" }).catch(() => {})
+      } catch {
+        toast.error("Erreur lors de l'upload")
+      } finally {
+        setUploading(false)
       }
-      toast.success(`${files.length} fichier${files.length > 1 ? "s" : ""} uploadé${files.length > 1 ? "s" : ""} — traitement OCR lancé`)
-      await fetchImports()
+    },
+    [fetchImports]
+  )
 
-      // Trigger immediate processing via VPS HTTP trigger
-      fetch("/api/trigger-import", { method: "POST" }).catch(() => {
-        // Silent — cron import-watch picks up within 15 min
-      })
-    } catch {
-      toast.error("Erreur lors de l'upload")
-    } finally {
-      setUploading(false)
-    }
-  }, [fetchImports])
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault()
+      setDragging(false)
+      handleFiles(e.dataTransfer.files)
+    },
+    [handleFiles]
+  )
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setDragging(false)
-    handleFiles(e.dataTransfer.files)
-  }, [handleFiles])
-
-  const statusConfig = {
-    uploading: { label: "En attente...", variant: "info" as const, icon: Loader2, spin: true },
-    processing: { label: "Traitement OCR...", variant: "warning" as const, icon: Loader2, spin: true },
-    completed: { label: "Terminé", variant: "success" as const, icon: CheckCircle, spin: false },
-    error: { label: "Erreur", variant: "destructive" as const, icon: XCircle, spin: false },
-  }
+  const processingCount = imports.filter(
+    (i) => i.status === "uploading" || i.status === "processing"
+  ).length
+  const completedCount = imports.filter((i) => i.status === "completed").length
+  const errorCount = imports.filter((i) => i.status === "error").length
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Import factures" description="Uploadez vos factures PDF ou images" sticky>
-        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => fetchImports()}>
+      <PageHeader
+        title="Import factures"
+        description="Uploadez vos factures PDF ou images — traitement automatique"
+        sticky
+      >
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          onClick={() => fetchImports()}
+        >
           <RefreshCw className="size-3.5" />
           Actualiser
         </Button>
       </PageHeader>
 
+      {/* Drop zone */}
       <Card>
-        <CardHeader>
-          <CardTitle>Déposer des fichiers</CardTitle>
-          <CardDescription>Formats acceptés : PDF, JPG, PNG, HEIC — taille max 10 Mo</CardDescription>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           <div
             className={cn(
-              "border-2 border-dashed rounded-lg p-10 text-center transition-colors",
-              dragging ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-muted-foreground/50",
+              "border-2 border-dashed rounded-xl p-10 text-center transition-all",
+              dragging
+                ? "border-primary bg-primary/5 scale-[1.01]"
+                : "border-muted-foreground/25 hover:border-muted-foreground/50",
               "cursor-pointer"
             )}
-            onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+            onDragOver={(e) => {
+              e.preventDefault()
+              setDragging(true)
+            }}
             onDragLeave={() => setDragging(false)}
             onDrop={handleDrop}
             onClick={() => document.getElementById("file-input")?.click()}
@@ -137,12 +317,16 @@ export default function ImportPage() {
               onChange={(e) => handleFiles(e.target.files)}
             />
             {uploading ? (
-              <Loader2 className="size-8 mx-auto mb-3 text-primary animate-spin" />
+              <Loader2 className="size-10 mx-auto mb-3 text-primary animate-spin" />
             ) : (
-              <Upload className="size-8 mx-auto mb-3 text-muted-foreground" />
+              <Upload className="size-10 mx-auto mb-3 text-muted-foreground" />
             )}
-            <p className="font-medium">{uploading ? "Upload en cours..." : "Déposez vos factures ici"}</p>
-            <p className="text-sm text-muted-foreground mt-1">ou cliquez pour sélectionner des fichiers</p>
+            <p className="font-medium text-base">
+              {uploading ? "Upload en cours..." : "Déposez vos factures ici"}
+            </p>
+            <p className="text-sm text-muted-foreground mt-1">
+              PDF, JPG, PNG, HEIC — plusieurs fichiers acceptés
+            </p>
             {!uploading && (
               <Button className="mt-4" variant="outline" type="button">
                 Parcourir...
@@ -152,58 +336,82 @@ export default function ImportPage() {
         </CardContent>
       </Card>
 
+      {/* Processing banner */}
+      {processingCount > 0 && (
+        <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/30 px-4 py-3">
+          <Loader2 className="size-4 text-blue-500 animate-spin shrink-0" />
+          <p className="text-sm text-blue-700 dark:text-blue-300">
+            <span className="font-medium">{processingCount} fichier{processingCount > 1 ? "s" : ""}</span>{" "}
+            en cours de traitement — mise à jour automatique toutes les 3s
+          </p>
+        </div>
+      )}
+
+      {/* Import history */}
       {imports.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Historique des imports</CardTitle>
-            {imports.some(i => i.status === "uploading" || i.status === "processing") && (
-              <CardDescription className="flex items-center gap-1.5 text-blue-600">
-                <Loader2 className="size-3 animate-spin" />
-                Traitement en cours — mise à jour automatique...
-              </CardDescription>
-            )}
+            <CardTitle className="flex items-center gap-3">
+              Historique
+              <div className="flex items-center gap-1.5 text-xs font-normal">
+                {completedCount > 0 && (
+                  <span className="rounded-full bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300 px-2 py-0.5">
+                    {completedCount} importée{completedCount > 1 ? "s" : ""}
+                  </span>
+                )}
+                {errorCount > 0 && (
+                  <span className="rounded-full bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300 px-2 py-0.5">
+                    {errorCount} erreur{errorCount > 1 ? "s" : ""}
+                  </span>
+                )}
+                {processingCount > 0 && (
+                  <span className="rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300 px-2 py-0.5">
+                    {processingCount} en cours
+                  </span>
+                )}
+              </div>
+            </CardTitle>
+            <CardDescription>
+              {imports.length} import{imports.length > 1 ? "s" : ""} au total
+            </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2">
-            {imports.map((imp: Import) => {
-              const config = statusConfig[imp.status] || statusConfig.uploading
-              const Icon = config.icon
-              return (
-                <div key={imp.id} className="flex items-center gap-3 p-3 bg-muted/30 rounded-md">
-                  <FileText className="size-4 text-muted-foreground shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{imp.filename}</p>
-                    <p className="text-xs text-muted-foreground">{formatDate(imp.created)}</p>
-                    {imp.errorMessage && (
-                      <p className="text-xs text-destructive mt-0.5">{imp.errorMessage}</p>
-                    )}
-                  </div>
-                  {imp.file && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="shrink-0 h-7 text-xs gap-1"
-                      onClick={() => setPreviewImport(imp)}
-                    >
-                      <Eye className="size-3" />
-                      Aperçu
-                    </Button>
-                  )}
-                  <Badge variant={config.variant} className="gap-1 shrink-0">
-                    <Icon className={cn("size-3", config.spin && "animate-spin")} />
-                    {config.label}
-                  </Badge>
-                </div>
-              )
-            })}
+          <CardContent className="space-y-3">
+            {imports.map((imp) => (
+              <ImportCard
+                key={imp.id}
+                imp={imp}
+                onPreview={setPreviewImport}
+              />
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Empty state */}
+      {imports.length === 0 && (
+        <Card>
+          <CardContent className="py-16">
+            <div className="flex flex-col items-center gap-3 text-muted-foreground">
+              <FileText className="size-10 opacity-30" />
+              <p className="font-medium text-sm text-foreground">Aucun import</p>
+              <p className="text-xs">
+                Déposez vos factures ci-dessus pour commencer
+              </p>
+            </div>
           </CardContent>
         </Card>
       )}
 
       {/* PDF Preview Dialog */}
-      <Dialog open={!!previewImport} onOpenChange={(open) => !open && setPreviewImport(null)}>
+      <Dialog
+        open={!!previewImport}
+        onOpenChange={(open) => !open && setPreviewImport(null)}
+      >
         <DialogContent className="max-w-4xl h-[85vh] flex flex-col p-0">
           <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
-            <DialogTitle className="text-base truncate">{previewImport?.filename}</DialogTitle>
+            <DialogTitle className="text-base truncate">
+              {previewImport?.filename}
+            </DialogTitle>
           </DialogHeader>
           <div className="flex-1 min-h-0 px-6 pb-6">
             {previewImport && getFileUrl(previewImport) ? (
