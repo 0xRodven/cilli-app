@@ -341,6 +341,14 @@ export default function ImportPage() {
       {/* Drop zone */}
       <Card>
         <CardContent className="pt-6">
+          <input
+            id="file-input"
+            type="file"
+            multiple
+            accept=".pdf,.jpg,.jpeg,.png,.heic"
+            className="hidden"
+            onChange={(e) => { handleFiles(e.target.files); e.target.value = "" }}
+          />
           <label
             htmlFor="file-input"
             className={cn(
@@ -357,14 +365,6 @@ export default function ImportPage() {
             onDragLeave={() => setDragging(false)}
             onDrop={handleDrop}
           >
-            <input
-              id="file-input"
-              type="file"
-              multiple
-              accept=".pdf,.jpg,.jpeg,.png,.heic"
-              className="hidden"
-              onChange={(e) => { handleFiles(e.target.files); e.target.value = "" }}
-            />
             {uploading ? (
               <Loader2 className="size-10 mx-auto mb-3 text-primary animate-spin" />
             ) : (
