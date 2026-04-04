@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect, useRef } from "react"
 import { PageHeader } from "@/components/layout/page-header"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -8,9 +8,8 @@ import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { getPocketBase } from "@/lib/pocketbase"
 import { toast } from "sonner"
-import { Upload, FileText, CheckCircle, XCircle, Loader2, Eye } from "lucide-react"
+import { Upload, FileText, CheckCircle, XCircle, Loader2, Eye, RefreshCw } from "lucide-react"
 import { cn, formatDate } from "@/lib/utils"
-import { useEffect } from "react"
 import type { Import } from "@/lib/types"
 
 function getFileUrl(imp: Import): string | null {
@@ -24,23 +23,47 @@ export default function ImportPage() {
   const [uploading, setUploading] = useState(false)
   const [imports, setImports] = useState<Import[]>([])
   const [previewImport, setPreviewImport] = useState<Import | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  useEffect(() => {
-    async function fetchImports() {
-      try {
-        const pb = getPocketBase()
-        const result = await pb.collection("imports").getList<Import>(1, 20, { sort: "-created" })
-        setImports(result.items)
-      } catch { /* silent */ }
+  const fetchImports = useCallback(async () => {
+    try {
+      const pb = getPocketBase()
+      const result = await pb.collection("imports").getList<Import>(1, 20, { sort: "-created" })
+      setImports(result.items)
+      return result.items
+    } catch {
+      return []
     }
-    fetchImports()
   }, [])
+
+  // Initial fetch
+  useEffect(() => {
+    fetchImports()
+  }, [fetchImports])
+
+  // Poll while there are pending imports
+  useEffect(() => {
+    const hasPending = imports.some(i => i.status === "uploading" || i.status === "processing")
+    if (hasPending && !pollRef.current) {
+      pollRef.current = setInterval(fetchImports, 5000)
+    } else if (!hasPending && pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+    }
+  }, [imports, fetchImports])
 
   const handleFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return
     setUploading(true)
     try {
       const pb = getPocketBase()
+      const newImportIds: string[] = []
       for (const file of Array.from(files)) {
         const formData = new FormData()
         formData.append("filename", file.name)
@@ -49,27 +72,22 @@ export default function ImportPage() {
         formData.append("file", file)
         formData.append("status", "uploading")
         formData.append("progress", "0")
-        await pb.collection("imports").create(formData)
+        const record = await pb.collection("imports").create(formData)
+        newImportIds.push(record.id)
       }
       toast.success(`${files.length} fichier${files.length > 1 ? "s" : ""} uploadé${files.length > 1 ? "s" : ""} — traitement OCR lancé`)
-      const result = await pb.collection("imports").getList<Import>(1, 20, { sort: "-created" })
-      setImports(result.items)
-      // Trigger immediate processing via bot
-      for (const item of result.items) {
-        if (item.status === "uploading") {
-          fetch("/api/trigger-import", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ importId: item.id, filename: item.filename }),
-          }).catch(() => { /* silent — cron will catch it anyway */ })
-        }
-      }
-    } catch (err) {
+      await fetchImports()
+
+      // Trigger immediate processing via VPS HTTP trigger
+      fetch("/api/trigger-import", { method: "POST" }).catch(() => {
+        // Silent — cron import-watch picks up within 15 min
+      })
+    } catch {
       toast.error("Erreur lors de l'upload")
     } finally {
       setUploading(false)
     }
-  }, [])
+  }, [fetchImports])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -78,15 +96,20 @@ export default function ImportPage() {
   }, [handleFiles])
 
   const statusConfig = {
-    uploading: { label: "Upload...", variant: "info" as const, icon: Loader2, spin: true },
-    processing: { label: "Traitement...", variant: "warning" as const, icon: Loader2, spin: true },
+    uploading: { label: "En attente...", variant: "info" as const, icon: Loader2, spin: true },
+    processing: { label: "Traitement OCR...", variant: "warning" as const, icon: Loader2, spin: true },
     completed: { label: "Terminé", variant: "success" as const, icon: CheckCircle, spin: false },
     error: { label: "Erreur", variant: "destructive" as const, icon: XCircle, spin: false },
   }
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Import factures" description="Uploadez vos factures PDF ou images" sticky />
+      <PageHeader title="Import factures" description="Uploadez vos factures PDF ou images" sticky>
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => fetchImports()}>
+          <RefreshCw className="size-3.5" />
+          Actualiser
+        </Button>
+      </PageHeader>
 
       <Card>
         <CardHeader>
@@ -133,6 +156,12 @@ export default function ImportPage() {
         <Card>
           <CardHeader>
             <CardTitle>Historique des imports</CardTitle>
+            {imports.some(i => i.status === "uploading" || i.status === "processing") && (
+              <CardDescription className="flex items-center gap-1.5 text-blue-600">
+                <Loader2 className="size-3 animate-spin" />
+                Traitement en cours — mise à jour automatique...
+              </CardDescription>
+            )}
           </CardHeader>
           <CardContent className="space-y-2">
             {imports.map((imp: Import) => {

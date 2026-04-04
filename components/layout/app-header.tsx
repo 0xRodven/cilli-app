@@ -50,7 +50,7 @@ const navSections = [
   {
     title: "OUTILS",
     items: [
-      { title: "Import", href: "/import", icon: Upload, disabled: true },
+      { title: "Import", href: "/import", icon: Upload },
       { title: "Paramètres", href: "/settings", icon: Settings, disabled: true },
     ],
   },

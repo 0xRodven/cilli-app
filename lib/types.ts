@@ -6,17 +6,18 @@ export interface Supplier {
   updated: string
   name: string
   type: string
+  category: string
   address: string
-  city: string
   phone: string
   email: string
+  siret: string
+  website: string
   status: "active" | "inactive" | "new"
   reliability: "good" | "average" | "poor" | "unknown"
   contactName: string
   specialties: string[]
   deliveryDays: string[]
   notes: string
-  tags: string[]
   odooPartnerId: string
 }
 

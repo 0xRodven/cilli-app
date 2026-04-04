@@ -15,14 +15,9 @@ export function useSuppliers(search?: string) {
       setError(null)
       try {
         const pb = getPocketBase()
-        const filters: string[] = []
-        if (search) filters.push(`name ~ "${search}"`)
-
-        const result = await pb.collection("suppliers").getList<Supplier>(1, 100, {
-          filter: filters.join(" && ") || undefined,
+        const result = await pb.collection("suppliers").getList<Supplier>(1, 200, {
           sort: "name",
         })
-        console.log("[useSuppliers] result:", result.totalItems, "items:", result.items?.length)
         setSuppliers(result.items)
       } catch (err) {
         console.error("[useSuppliers] error:", err)
@@ -32,7 +27,7 @@ export function useSuppliers(search?: string) {
       }
     }
     fetchSuppliers()
-  }, [search])
+  }, [])
 
   return { suppliers, loading, error }
 }

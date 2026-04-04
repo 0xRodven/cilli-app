@@ -1,33 +1,31 @@
 import { NextResponse } from "next/server"
 
-const BOT_TOKEN = "8772491229:AAHYEKH86Ps2Z42MPXUzdCMb0eHR5ZkZjE8"
-const OUSMANE_CHAT_ID = "6232011371"
+// The trigger server runs on the VPS at localhost:8095
+// We proxy through this Next.js route since Vercel can't reach VPS ports directly
+const VPS_HOST = (process.env.POCKETBASE_INTERNAL_URL || "http://46.225.210.206:8090").replace(":8090", "")
+const TRIGGER_URL = `${VPS_HOST}:8095`
 
-export async function POST(req: Request) {
+export async function POST() {
   try {
-    const { importId, filename } = await req.json()
-
-    // Send a message to the bot as if Ousmane is asking it to process
-    // The bot will see this as a DM and trigger the invoice-processor skill
-    const message = `Nouvelle facture uploadée via le dashboard :\n📎 ${filename}\n\nTraite cette facture depuis PocketBase imports/${importId}. Récupère le fichier, fais l'OCR, crée la facture et les lignes dans PocketBase.`
-
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    const res = await fetch(`${TRIGGER_URL}/import`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: OUSMANE_CHAT_ID,
-        text: message,
-      }),
+      signal: AbortSignal.timeout(10000),
     })
-
     const data = await res.json()
+    return NextResponse.json(data)
+  } catch {
+    return NextResponse.json({ error: "VPS trigger unreachable" }, { status: 502 })
+  }
+}
 
-    if (!data.ok) {
-      return NextResponse.json({ error: data.description }, { status: 500 })
-    }
-
-    return NextResponse.json({ ok: true, messageId: data.result?.message_id })
-  } catch (err) {
-    return NextResponse.json({ error: "Failed to trigger import" }, { status: 500 })
+export async function GET() {
+  try {
+    const res = await fetch(`${TRIGGER_URL}/import/status`, {
+      signal: AbortSignal.timeout(5000),
+    })
+    const data = await res.json()
+    return NextResponse.json(data)
+  } catch {
+    return NextResponse.json({ error: "VPS unreachable" }, { status: 502 })
   }
 }
