@@ -172,26 +172,46 @@ export default function ImportPage() {
   const [imports, setImports] = useState<(Import & { linkedInvoice?: Invoice | null })[]>([])
   const [previewImport, setPreviewImport] = useState<Import | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const invoiceCacheRef = useRef<Record<string, Invoice>>({})
 
   const fetchImports = useCallback(async () => {
     try {
       const pb = getPocketBase()
       const result = await pb.collection("imports").getList<Import>(1, 30, { sort: "-created" })
 
-      // Fetch linked invoices for completed imports
-      const enriched = await Promise.all(
-        result.items.map(async (imp) => {
-          if (imp.status === "completed" && imp.invoice) {
+      // Enrich completed imports with cached invoice data
+      const enriched = result.items.map((imp) => {
+        if (imp.status === "completed" && imp.invoice && invoiceCacheRef.current[imp.invoice]) {
+          return { ...imp, linkedInvoice: invoiceCacheRef.current[imp.invoice] }
+        }
+        return { ...imp, linkedInvoice: null as Invoice | null }
+      })
+
+      // Fetch missing invoices (not in cache) — fire and forget, update on next poll
+      const missing = enriched.filter(
+        (imp) => imp.status === "completed" && imp.invoice && !imp.linkedInvoice
+      )
+      if (missing.length > 0) {
+        Promise.all(
+          missing.map(async (imp) => {
             try {
               const invoice = await pb.collection("invoices").getOne<Invoice>(imp.invoice)
-              return { ...imp, linkedInvoice: invoice }
-            } catch {
-              return { ...imp, linkedInvoice: null }
-            }
-          }
-          return { ...imp, linkedInvoice: null }
+              invoiceCacheRef.current[imp.invoice] = invoice
+            } catch { /* skip */ }
+          })
+        ).then(() => {
+          // Re-enrich with fetched invoices
+          setImports((prev) =>
+            prev.map((imp) => {
+              if (imp.status === "completed" && imp.invoice && invoiceCacheRef.current[imp.invoice]) {
+                return { ...imp, linkedInvoice: invoiceCacheRef.current[imp.invoice] }
+              }
+              return imp
+            })
+          )
         })
-      )
+      }
+
       setImports(enriched)
       return enriched
     } catch {
@@ -199,28 +219,45 @@ export default function ImportPage() {
     }
   }, [])
 
+  // Initial fetch
   useEffect(() => {
     fetchImports()
   }, [fetchImports])
 
-  // Poll every 3s while there are pending imports
+  // Poll every 3s while there are pending imports — use ref to avoid re-triggering
+  const hasPendingRef = useRef(false)
   useEffect(() => {
-    const hasPending = imports.some(
+    hasPendingRef.current = imports.some(
       (i) => i.status === "uploading" || i.status === "processing"
     )
-    if (hasPending && !pollRef.current) {
-      pollRef.current = setInterval(fetchImports, 3000)
-    } else if (!hasPending && pollRef.current) {
-      clearInterval(pollRef.current)
-      pollRef.current = null
+  }, [imports])
+
+  useEffect(() => {
+    const startPolling = () => {
+      if (pollRef.current) return
+      pollRef.current = setInterval(async () => {
+        await fetchImports()
+        // Check ref after fetch — stop if nothing pending
+        if (!hasPendingRef.current && pollRef.current) {
+          clearInterval(pollRef.current)
+          pollRef.current = null
+        }
+      }, 3000)
     }
+
+    // Start polling after initial fetch if needed
+    const check = setTimeout(() => {
+      if (hasPendingRef.current) startPolling()
+    }, 1000)
+
     return () => {
+      clearTimeout(check)
       if (pollRef.current) {
         clearInterval(pollRef.current)
         pollRef.current = null
       }
     }
-  }, [imports, fetchImports])
+  }, [fetchImports])
 
   const handleFiles = useCallback(
     async (files: FileList | null) => {
@@ -247,6 +284,18 @@ export default function ImportPage() {
 
         // Trigger VPS processing
         fetch("/api/trigger-import", { method: "POST" }).catch(() => {})
+
+        // Start polling for progress
+        if (!pollRef.current) {
+          hasPendingRef.current = true
+          pollRef.current = setInterval(async () => {
+            await fetchImports()
+            if (!hasPendingRef.current && pollRef.current) {
+              clearInterval(pollRef.current)
+              pollRef.current = null
+            }
+          }, 3000)
+        }
       } catch {
         toast.error("Erreur lors de l'upload")
       } finally {
